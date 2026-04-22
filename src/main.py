@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 
-from utils.github_client import GitHubClient
+from src.utils.github_client import GitHubClient
 
 load_dotenv()
 
