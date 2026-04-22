@@ -40,6 +40,6 @@ class ReviewerState(BaseModel):
     is_valid: bool = False
     critic_feedback: Optional[str] = None
     lint_findings: list[str] = Field(default_factory=list)
-    raw_responses: list[str] = Field(default_factory=list)
+    raw_responses: Annotated[list[str], operator.add] = Field(default_factory=list)
     route: Optional[str] = None
     critic_issues: list[CriticIssue] = Field(default_factory=list)
