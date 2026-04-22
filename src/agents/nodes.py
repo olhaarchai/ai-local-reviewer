@@ -207,6 +207,11 @@ async def security_analyst_node(state: ReviewerState):
             f"\n\nADDITIONAL PROJECT RULES (enforce these too):\n{rules_text}"
         )
         logger.info("[security_analyst] Injected %d project rules", len(guidelines))
+    critic_feedback = _state_get(state, "critic_feedback", None)
+    if critic_feedback:
+        system_content += (
+            "\n\nCRITIC FEEDBACK (fix these issues in your output):\n" + critic_feedback
+        )
 
     diff = _state_get(state, "diff", "")
     response = await llm_security.ainvoke(
@@ -243,6 +248,11 @@ async def style_analyst_node(state: ReviewerState):
             f"\n\nADDITIONAL PROJECT RULES (enforce these too):\n{rules_text}"
         )
         logger.info("[style_analyst] Injected %d project rules", len(guidelines))
+    critic_feedback = _state_get(state, "critic_feedback", None)
+    if critic_feedback:
+        system_content += (
+            "\n\nCRITIC FEEDBACK (fix these issues in your output):\n" + critic_feedback
+        )
 
     diff = _state_get(state, "diff", "")
     response = await llm_style.ainvoke(
@@ -362,6 +372,12 @@ def critic_node(state: ReviewerState) -> dict:
         "critic_issues": issues,
         "iterations": iterations,
     }
+
+
+def retry_node(state: ReviewerState) -> dict:
+    iterations = _state_get(state, "iterations", 0)
+    logger.info("[critic] Retry requested (iteration %s)", iterations)
+    return {}
 
 
 async def summary_node(state: ReviewerState):
