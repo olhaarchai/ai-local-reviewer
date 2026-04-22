@@ -21,12 +21,32 @@ llm_style = ChatOllama(
 )
 llm_fast = ChatOllama(model=os.getenv("OLLAMA_MODEL_FAST"), temperature=0.1)
 
-_FORMAT = (
-    "Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\n"
-    'Format: [{"path": "file_path", "line": 10, "body": "description"}]\n'
+_LINE_RULE = (
     'CRITICAL: Only comment on lines that start with "+" in the diff. '
     "Use the hunk header (@@ -L,l +L,l @@) to calculate the correct absolute line number. "
-    "If you are unsure of the exact line number, skip the comment entirely — do NOT guess."
+    "If you are unsure of the exact line number, skip the comment — do NOT guess."
+)
+
+_SECURITY_FORMAT = (
+    "Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\n"
+    'Format: [{"path": "file.ts", "line": 10, "owasp_id": "A03:2021", '
+    '"severity": "High", "body": "description"}]\n'
+    "Severity values: Critical, High, Medium, Low.\n" + _LINE_RULE
+)
+
+_STYLE_FORMAT = (
+    "Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\n"
+    'Format: [{"path": "file.ts", "line": 10, "body": "description"}]\n' + _LINE_RULE
+)
+
+_OWASP_FOCUS = (
+    "Focus on the following OWASP Top 10 (2021) categories:\n"
+    "- A01:2021 Broken Access Control — missing auth checks, IDOR, privilege escalation\n"
+    "- A02:2021 Cryptographic Failures — plaintext secrets, weak hashing, hardcoded keys\n"
+    "- A03:2021 Injection — SQL, command, NoSQL injection via string concatenation\n"
+    "- A05:2021 Security Misconfiguration — debug flags, open CORS, exposed stack traces\n"
+    "- A07:2021 Identification and Authentication Failures — missing token validation, insecure sessions\n"
+    "- A10:2021 Server-Side Request Forgery — unvalidated URLs passed to HTTP clients\n"
 )
 
 _NOISE_FILE_PATTERNS = (
@@ -84,14 +104,16 @@ def filter_node(state: ReviewerState) -> dict:
 
 async def security_analyst_node(state: ReviewerState):
     model_name = os.getenv("OLLAMA_MODEL_SECURITY")
-    logger.info("[security_analyst] Starting with model=%s", model_name)
+    logger.info("[security_analyst] Starting OWASP audit with model=%s", model_name)
 
     response = await llm_security.ainvoke(
         [
             SystemMessage(
                 content=(
-                    "You are a Senior Security Engineer. Analyze the code diff for vulnerabilities. "
-                    + _FORMAT
+                    "You are an Expert Security Auditor performing an OWASP Top 10 (2021) code review.\n"
+                    + _OWASP_FOCUS
+                    + "\n"
+                    + _SECURITY_FORMAT
                 )
             ),
             HumanMessage(content=f"DIFF:\n{state['diff']}"),
@@ -117,7 +139,7 @@ async def style_analyst_node(state: ReviewerState):
             SystemMessage(
                 content=(
                     "You are a Senior Developer. Review the code diff for style, naming conventions, "
-                    "and best practices. " + _FORMAT
+                    "and best practices. " + _STYLE_FORMAT
                 )
             ),
             HumanMessage(content=f"DIFF:\n{state['diff']}"),

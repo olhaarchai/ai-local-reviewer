@@ -75,7 +75,15 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                 print(f"AI REVIEW COMPLETE FOR PR #{pr_number}")
                 print(f"Structured issues found: {len(ai_comments)}")
                 for c in ai_comments:
-                    print(f"  [{c.get('path')}:{c.get('line')}] {c.get('body')}")
+                    owasp = f" [{c.get('owasp_id')}]" if c.get("owasp_id") else ""
+                    severity = (
+                        f" ({c.get('severity', '').upper()})"
+                        if c.get("severity")
+                        else ""
+                    )
+                    print(
+                        f"  {severity}{owasp} {c.get('path')}:{c.get('line')} — {c.get('body')}"
+                    )
                 print("\nSUMMARY:")
                 print(ai_summary)
                 print("=" * 50 + "\n")

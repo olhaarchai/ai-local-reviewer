@@ -66,8 +66,17 @@ class GitHubClient:
         }
         url = f"{self.base_url}/repos/{repo_name}/pulls/{pr_number}/reviews"
 
+        def _format_body(c: dict) -> str:
+            parts = []
+            if c.get("severity"):
+                parts.append(f"**{c['severity'].upper()}**")
+            if c.get("owasp_id"):
+                parts.append(f"`{c['owasp_id']}`")
+            parts.append(c["body"])
+            return " ".join(parts)
+
         github_comments = [
-            {"path": c["path"], "line": int(c["line"]), "body": c["body"]}
+            {"path": c["path"], "line": int(c["line"]), "body": _format_body(c)}
             for c in comments
             if c.get("path") and c.get("line") and c.get("body")
         ]
@@ -90,7 +99,7 @@ class GitHubClient:
                 # Append issues list to body so nothing is lost
                 issues_md = "\n".join(
                     f"- `{c['path']}:{c['line']}` — {c['body']}"
-                    for c in github_comments
+                    for c in github_comments  # body already formatted with severity/owasp
                 )
                 fallback_body = f"{body}\n\n---\n**Findings (inline comments unavailable):**\n{issues_md}"
                 response = await client.post(
