@@ -1,11 +1,45 @@
 import operator
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, Literal, Optional, Union
 
 from langgraph.graph.message import add_messages
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class ReviewerState(TypedDict):
+class SecurityComment(BaseModel):
+    path: str
+    line: int
+    body: str
+    owasp_id: Optional[str] = None
+    severity: Optional[Literal["Critical", "High", "Medium", "Low"]] = None
+
+
+class StyleComment(BaseModel):
+    path: str
+    line: int
+    body: str
+
+
+class CriticIssue(BaseModel):
+    path: str
+    line: int
+    rule_id: str
+    message: str
+
+
+ReviewComment = Union[SecurityComment, StyleComment, dict[str, Any]]
+
+
+class ReviewerState(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     diff: str
-    comments: Annotated[list, operator.add]
-    messages: Annotated[list, add_messages]
-    guidelines: list
+    comments: Annotated[list[ReviewComment], operator.add] = Field(default_factory=list)
+    messages: Annotated[list[Any], add_messages] = Field(default_factory=list)
+    guidelines: list[str] = Field(default_factory=list)
+    iterations: int = 0
+    is_valid: bool = False
+    critic_feedback: Optional[str] = None
+    lint_findings: list[str] = Field(default_factory=list)
+    raw_responses: list[str] = Field(default_factory=list)
+    route: Optional[str] = None
+    critic_issues: list[CriticIssue] = Field(default_factory=list)

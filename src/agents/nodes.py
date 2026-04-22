@@ -3,6 +3,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -114,11 +115,16 @@ def _parse_json_response(content: str, node: str) -> list:
     return parsed
 
 
+def _state_get(state: ReviewerState | dict, key: str, default: Any = None) -> Any:
+    if isinstance(state, dict):
+        return state.get(key, default)
+    return getattr(state, key, default)
+
+
 def filter_node(state: ReviewerState) -> dict:
-    filtered = filter_diff(state["diff"])
-    logger.info(
-        "[filter_node] Diff size: %d → %d chars", len(state["diff"]), len(filtered)
-    )
+    diff = _state_get(state, "diff", "")
+    filtered = filter_diff(diff)
+    logger.info("[filter_node] Diff size: %d → %d chars", len(diff), len(filtered))
     return {"diff": filtered}
 
 
@@ -127,7 +133,7 @@ async def security_analyst_node(state: ReviewerState):
     logger.info("[security_analyst] Starting OWASP audit with model=%s", model_name)
 
     system_content = _SECURITY_PERSONA + _OWASP_FOCUS + "\n" + _SECURITY_FORMAT
-    guidelines = state.get("guidelines", [])
+    guidelines = _state_get(state, "guidelines", [])
     if guidelines:
         rules_text = "\n".join(f"- {r}" for r in guidelines)
         system_content += (
@@ -135,10 +141,11 @@ async def security_analyst_node(state: ReviewerState):
         )
         logger.info("[security_analyst] Injected %d project rules", len(guidelines))
 
+    diff = _state_get(state, "diff", "")
     response = await llm_security.ainvoke(
         [
             SystemMessage(content=system_content),
-            HumanMessage(content=f"DIFF:\n{state['diff']}"),
+            HumanMessage(content=f"DIFF:\n{diff}"),
         ]
     )
 
@@ -157,7 +164,7 @@ async def style_analyst_node(state: ReviewerState):
     logger.info("[style_analyst] Starting with model=%s", model_name)
 
     system_content = _STYLE_PERSONA + _STYLE_FORMAT
-    guidelines = state.get("guidelines", [])
+    guidelines = _state_get(state, "guidelines", [])
     if guidelines:
         rules_text = "\n".join(f"- {r}" for r in guidelines)
         system_content += (
@@ -165,10 +172,11 @@ async def style_analyst_node(state: ReviewerState):
         )
         logger.info("[style_analyst] Injected %d project rules", len(guidelines))
 
+    diff = _state_get(state, "diff", "")
     response = await llm_style.ainvoke(
         [
             SystemMessage(content=system_content),
-            HumanMessage(content=f"DIFF:\n{state['diff']}"),
+            HumanMessage(content=f"DIFF:\n{diff}"),
         ]
     )
 
@@ -184,7 +192,7 @@ async def style_analyst_node(state: ReviewerState):
 
 async def summary_node(state: ReviewerState):
     model_name = os.getenv("OLLAMA_MODEL_FAST")
-    comments = state.get("comments", [])
+    comments = _state_get(state, "comments", [])
     logger.info(
         "[summarizer] Starting with model=%s, total structured comments=%d",
         model_name,
@@ -193,7 +201,7 @@ async def summary_node(state: ReviewerState):
 
     analyst_outputs = [
         msg.content
-        for msg in state["messages"]
+        for msg in _state_get(state, "messages", [])
         if hasattr(msg, "content") and msg.content
     ]
     combined = "\n\n---\n\n".join(analyst_outputs)

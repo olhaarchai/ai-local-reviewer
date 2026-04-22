@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from typing import Any
 
 from sentence_transformers import SentenceTransformer
 
@@ -36,8 +37,14 @@ def detect_stack(diff: str) -> list[str]:
     return detected
 
 
-async def retriever_node(state: dict) -> dict:
-    diff = state.get("diff", "")
+def _state_get(state: dict | Any, key: str, default: Any = None) -> Any:
+    if isinstance(state, dict):
+        return state.get(key, default)
+    return getattr(state, key, default)
+
+
+async def retriever_node(state: dict | Any) -> dict:
+    diff = _state_get(state, "diff", "")
     if not diff:
         return {"guidelines": []}
 
