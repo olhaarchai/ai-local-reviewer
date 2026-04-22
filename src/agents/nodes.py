@@ -8,8 +8,9 @@ from typing import Any
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
+from langgraph.types import Overwrite
 
-from src.agents.state import CriticIssue, ReviewerState
+from src.agents.state import ReviewerState
 
 load_dotenv()
 
@@ -192,7 +193,16 @@ def filter_node(state: ReviewerState) -> dict:
     diff = _state_get(state, "diff", "")
     filtered = filter_diff(diff)
     logger.info("[filter_node] Diff size: %d → %d chars", len(diff), len(filtered))
-    return {"diff": filtered}
+    return {
+        "diff": filtered,
+        "comments": Overwrite(value=[]),
+        "messages": Overwrite(value=[]),
+        "raw_responses": Overwrite(value=[]),
+        "critic_issues": [],
+        "critic_feedback": None,
+        "iterations": 0,
+        "is_valid": False,
+    }
 
 
 async def security_analyst_node(state: ReviewerState):
@@ -285,30 +295,30 @@ def critic_node(state: ReviewerState) -> dict:
     iterations = int(_state_get(state, "iterations", 0) or 0) + 1
 
     guideline_rules = _extract_rule_ids(guidelines)
-    issues: list[CriticIssue] = []
+    issues: list[dict[str, Any]] = []
     feedback_lines: list[str] = []
 
     if not comments:
         if raw_responses:
             issues.append(
-                CriticIssue(
-                    path="unknown",
-                    line=0,
-                    rule_id="FORMAT",
-                    message="Analyst output is not valid JSON. Preserve content and fix formatting.",
-                )
+                {
+                    "path": "unknown",
+                    "line": 0,
+                    "rule_id": "FORMAT",
+                    "message": "Analyst output is not valid JSON. Preserve content and fix formatting.",
+                }
             )
             feedback_lines.append(
                 "Analyst output is not valid JSON. Preserve content and fix formatting."
             )
         if _diff_has_obvious_issues(diff):
             issues.append(
-                CriticIssue(
-                    path="unknown",
-                    line=0,
-                    rule_id="MISSING",
-                    message="No findings returned despite obvious risk keywords in the diff.",
-                )
+                {
+                    "path": "unknown",
+                    "line": 0,
+                    "rule_id": "MISSING",
+                    "message": "No findings returned despite obvious risk keywords in the diff.",
+                }
             )
             feedback_lines.append(
                 "No findings returned despite obvious risk keywords in the diff."
@@ -318,24 +328,24 @@ def critic_node(state: ReviewerState) -> dict:
         path, line, body = _extract_comment_fields(comment)
         if not path or line <= 0:
             issues.append(
-                CriticIssue(
-                    path=path or "unknown",
-                    line=line,
-                    rule_id="FORMAT",
-                    message="Comment missing valid path/line.",
-                )
+                {
+                    "path": path or "unknown",
+                    "line": line,
+                    "rule_id": "FORMAT",
+                    "message": "Comment missing valid path/line.",
+                }
             )
             feedback_lines.append(
                 f"Comment missing valid path/line: {path or 'unknown'}:{line}."
             )
         if not body.strip():
             issues.append(
-                CriticIssue(
-                    path=path or "unknown",
-                    line=line,
-                    rule_id="FORMAT",
-                    message="Comment body is empty.",
-                )
+                {
+                    "path": path or "unknown",
+                    "line": line,
+                    "rule_id": "FORMAT",
+                    "message": "Comment body is empty.",
+                }
             )
             feedback_lines.append(
                 f"Comment body is empty for {path or 'unknown'}:{line}."
@@ -346,12 +356,12 @@ def critic_node(state: ReviewerState) -> dict:
             rule_id = rule_match.group("rule")
             if guideline_rules and rule_id not in guideline_rules:
                 issues.append(
-                    CriticIssue(
-                        path=path or "unknown",
-                        line=line,
-                        rule_id=rule_id,
-                        message="Rule ID not found in project guidelines.",
-                    )
+                    {
+                        "path": path or "unknown",
+                        "line": line,
+                        "rule_id": rule_id,
+                        "message": "Rule ID not found in project guidelines.",
+                    }
                 )
                 feedback_lines.append(
                     f"Rule ID [{rule_id}] is not present in project guidelines."
@@ -377,7 +387,12 @@ def critic_node(state: ReviewerState) -> dict:
 def retry_node(state: ReviewerState) -> dict:
     iterations = _state_get(state, "iterations", 0)
     logger.info("[critic] Retry requested (iteration %s)", iterations)
-    return {}
+    return {
+        "comments": Overwrite(value=[]),
+        "messages": Overwrite(value=[]),
+        "raw_responses": Overwrite(value=[]),
+        "critic_issues": [],
+    }
 
 
 async def summary_node(state: ReviewerState):

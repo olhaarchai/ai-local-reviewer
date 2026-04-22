@@ -2,11 +2,12 @@ import hashlib
 import hmac
 import logging
 import os
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 
-from src.agents.graph import reviewer_app
+from src.agents.graph import build_reviewer_app, enter_checkpointer
 from src.utils.github_client import GitHubClient
 
 load_dotenv()
@@ -24,7 +25,20 @@ logging.getLogger("PIL").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.checkpointer_stack = AsyncExitStack()
+    await app.state.checkpointer_stack.__aenter__()
+    checkpointer = await enter_checkpointer(app.state.checkpointer_stack)
+    app.state.reviewer_app = build_reviewer_app(checkpointer)
+    try:
+        yield
+    finally:
+        await app.state.checkpointer_stack.__aexit__(None, None, None)
+
+
+app = FastAPI(lifespan=lifespan)
 
 WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 BOT_NAME = os.getenv("GITHUB_BOT_NAME")
@@ -66,7 +80,11 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
             try:
                 diff_text = await gh_client.get_pull_request_diff(repo_name, pr_number)
                 initial_state = {"diff": diff_text, "comments": [], "messages": []}
-                final_output = await reviewer_app.ainvoke(initial_state)
+                thread_id = f"{repo_name}#{pr_number}"
+                reviewer_app = request.app.state.reviewer_app
+                final_output = await reviewer_app.ainvoke(
+                    initial_state, config={"configurable": {"thread_id": thread_id}}
+                )
 
                 ai_summary = final_output["messages"][-1].content
                 ai_comments = final_output.get("comments", [])

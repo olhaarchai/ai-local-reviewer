@@ -1,3 +1,9 @@
+import logging
+import os
+from contextlib import AsyncExitStack
+from pathlib import Path
+
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from src.agents.nodes import (
@@ -15,6 +21,8 @@ builder = StateGraph(ReviewerState)
 
 MAX_CRITIC_ITERATIONS = 3
 
+logger = logging.getLogger(__name__)
+
 
 def _state_get(state: ReviewerState | dict, key: str, default=None):
     if isinstance(state, dict):
@@ -28,6 +36,37 @@ def _route_after_critic(state: ReviewerState | dict) -> str:
     if is_valid or iterations >= MAX_CRITIC_ITERATIONS:
         return "summarizer"
     return "retry"
+
+
+async def enter_checkpointer(exit_stack: AsyncExitStack):
+    postgres_dsn = os.getenv("CHECKPOINT_POSTGRES_DSN")
+    if postgres_dsn:
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "CHECKPOINT_POSTGRES_DSN set but langgraph-checkpoint-postgres is not installed."
+            ) from exc
+
+        return await exit_stack.enter_async_context(
+            AsyncPostgresSaver.from_conn_string(postgres_dsn)
+        )
+    sqlite_path = os.getenv(
+        "CHECKPOINT_SQLITE_PATH", ".data/reviewer_checkpoints.sqlite"
+    )
+    try:
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    except ModuleNotFoundError:
+        logger.warning(
+            "[checkpointer] SqliteSaver not available; falling back to InMemorySaver. "
+            "Install langgraph-checkpoint-sqlite for persistence."
+        )
+        return InMemorySaver()
+    path = Path(sqlite_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return await exit_stack.enter_async_context(
+        AsyncSqliteSaver.from_conn_string(path.as_posix())
+    )
 
 
 builder.add_node("filter", filter_node)
@@ -58,4 +97,6 @@ builder.add_edge("retry", "security_analyst")
 builder.add_edge("retry", "style_analyst")
 builder.add_edge("summarizer", END)
 
-reviewer_app = builder.compile()
+
+def build_reviewer_app(checkpointer):
+    return builder.compile(checkpointer=checkpointer)

@@ -19,13 +19,6 @@ class StyleComment(BaseModel):
     body: str
 
 
-class CriticIssue(BaseModel):
-    path: str
-    line: int
-    rule_id: str
-    message: str
-
-
 ReviewComment = Union[SecurityComment, StyleComment, dict[str, Any]]
 
 
@@ -42,4 +35,4 @@ class ReviewerState(BaseModel):
     lint_findings: list[str] = Field(default_factory=list)
     raw_responses: Annotated[list[str], operator.add] = Field(default_factory=list)
     route: Optional[str] = None
-    critic_issues: list[CriticIssue] = Field(default_factory=list)
+    critic_issues: list[dict[str, Any]] = Field(default_factory=list)
