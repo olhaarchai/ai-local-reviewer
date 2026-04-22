@@ -36,3 +36,4 @@ class ReviewerState(BaseModel):
     raw_responses: Annotated[list[str], operator.add] = Field(default_factory=list)
     route: Optional[str] = None
     critic_issues: list[dict[str, Any]] = Field(default_factory=list)
+    summary_override: Optional[str] = None

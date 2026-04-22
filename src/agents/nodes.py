@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from langgraph.types import Overwrite
 
@@ -173,6 +173,52 @@ def _extract_comment_fields(comment: Any) -> tuple[str, int, str]:
     return ("", 0, str(comment) if comment is not None else "")
 
 
+def _extract_comment_meta(comment: Any) -> tuple[str | None, str | None]:
+    if hasattr(comment, "owasp_id") or hasattr(comment, "severity"):
+        return (
+            getattr(comment, "owasp_id", None),
+            getattr(comment, "severity", None),
+        )
+    if isinstance(comment, dict):
+        return (comment.get("owasp_id"), comment.get("severity"))
+    return (None, None)
+
+
+def _build_summary_from_comments(comments: list[Any]) -> str | None:
+    findings_lines = []
+    files: set[str] = set()
+    for comment in comments:
+        path, line, body = _extract_comment_fields(comment)
+        if not (path and line and body):
+            continue
+        files.add(path)
+        owasp_id, severity = _extract_comment_meta(comment)
+        prefix = ""
+        if severity:
+            prefix += f"[{str(severity).upper()}] "
+        if owasp_id:
+            prefix += f"[{owasp_id}] "
+        findings_lines.append(f"- {prefix}{path}:{line} — {body}")
+
+    if not findings_lines:
+        return None
+
+    total = len(findings_lines)
+    file_count = len(files)
+    lines = [
+        "Executive Summary",
+        "",
+        f"Found {total} issue(s) across {file_count} file(s).",
+        "",
+        "Key findings:",
+        *findings_lines,
+        "",
+        "Recommendations:",
+        "- Address the findings above and re-run the review.",
+    ]
+    return "\n".join(lines).strip()
+
+
 def _added_lines(diff: str) -> list[str]:
     lines = []
     for line in diff.splitlines():
@@ -202,6 +248,7 @@ def filter_node(state: ReviewerState) -> dict:
         "critic_feedback": None,
         "iterations": 0,
         "is_valid": False,
+        "summary_override": None,
     }
 
 
@@ -398,26 +445,20 @@ def retry_node(state: ReviewerState) -> dict:
 async def summary_node(state: ReviewerState):
     model_name = os.getenv("OLLAMA_MODEL_FAST")
     comments = _state_get(state, "comments", [])
+    summary_override = _state_get(state, "summary_override", None)
     logger.info(
         "[summarizer] Starting with model=%s, total structured comments=%d",
         model_name,
         len(comments),
     )
+    if summary_override:
+        logger.info("[summarizer] Using human-provided summary override")
+        return {"messages": [AIMessage(content=summary_override)]}
 
-    analyst_outputs = [
-        msg.content
-        for msg in _state_get(state, "messages", [])
-        if hasattr(msg, "content") and msg.content
-    ]
-    combined = "\n\n---\n\n".join(analyst_outputs)
+    summary = _build_summary_from_comments(comments)
+    if summary:
+        logger.info("[summarizer] Using deterministic summary")
+        return {"messages": [AIMessage(content=summary)]}
 
-    response = await llm_fast.ainvoke(
-        [
-            SystemMessage(content=_SUMMARIZER_PERSONA),
-            HumanMessage(content=f"REVIEWS:\n{combined}"),
-        ]
-    )
-
-    logger.info("[summarizer] Done. Response length=%d chars", len(response.content))
-    logger.debug("[summarizer] Response:\n%s", response.content)
-    return {"messages": [response]}
+    logger.info("[summarizer] No findings; returning empty summary")
+    return {"messages": [AIMessage(content="Executive Summary\n\nNo issues found.")]}

@@ -1,11 +1,14 @@
+import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
+from langgraph.errors import GraphInterrupt
 
 from src.agents.graph import build_reviewer_app, enter_checkpointer
 from src.utils.github_client import GitHubClient
@@ -31,7 +34,9 @@ async def lifespan(app: FastAPI):
     app.state.checkpointer_stack = AsyncExitStack()
     await app.state.checkpointer_stack.__aenter__()
     checkpointer = await enter_checkpointer(app.state.checkpointer_stack)
-    app.state.reviewer_app = build_reviewer_app(checkpointer)
+    app.state.reviewer_app = build_reviewer_app(
+        checkpointer, interrupt_before=["summarizer"]
+    )
     try:
         yield
     finally:
@@ -42,6 +47,73 @@ app = FastAPI(lifespan=lifespan)
 
 WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 BOT_NAME = os.getenv("GITHUB_BOT_NAME")
+
+
+async def _prompt_user(prompt: str) -> str:
+    return await asyncio.to_thread(input, prompt)
+
+
+async def _collect_multiline(prompt: str) -> str:
+    logger.info(prompt)
+    lines: list[str] = []
+    while True:
+        line = await _prompt_user("")
+        if line.strip() == ".":
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _looks_like_json(text: str | None) -> bool:
+    if not text:
+        return False
+    stripped = text.strip()
+    if not (stripped.startswith("{") or stripped.startswith("[")):
+        return False
+    try:
+        json.loads(stripped)
+        return True
+    except json.JSONDecodeError:
+        return False
+
+
+def _build_summary_from_comments(comments: list[dict]) -> str | None:
+    findings = []
+    files: set[str] = set()
+    for comment in comments:
+        path = str(comment.get("path", "")).strip()
+        line = comment.get("line", 0)
+        body = str(comment.get("body", "")).strip()
+        if not (path and line and body):
+            continue
+        files.add(path)
+        owasp_id = comment.get("owasp_id")
+        severity = comment.get("severity")
+        prefix = ""
+        if severity:
+            prefix += f"[{str(severity).upper()}] "
+        if owasp_id:
+            prefix += f"[{owasp_id}] "
+        findings.append(f"- {prefix}{path}:{line} — {body}")
+
+    if not findings:
+        return None
+
+    total = len(findings)
+    file_count = len(files)
+    return "\n".join(
+        [
+            "Executive Summary",
+            "",
+            f"Found {total} issue(s) across {file_count} file(s).",
+            "",
+            "Key findings:",
+            *findings,
+            "",
+            "Recommendations:",
+            "- Address the findings above and re-run the review.",
+        ]
+    ).strip()
 
 
 async def verify_signature(request: Request):
@@ -82,12 +154,63 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                 initial_state = {"diff": diff_text, "comments": [], "messages": []}
                 thread_id = f"{repo_name}#{pr_number}"
                 reviewer_app = request.app.state.reviewer_app
-                final_output = await reviewer_app.ainvoke(
-                    initial_state, config={"configurable": {"thread_id": thread_id}}
-                )
+                config = {"configurable": {"thread_id": thread_id}}
+                try:
+                    final_output = await reviewer_app.ainvoke(
+                        initial_state, config=config
+                    )
+                except GraphInterrupt:
+                    snapshot = await reviewer_app.aget_state(config)
+                    values = (
+                        snapshot.values if isinstance(snapshot.values, dict) else {}
+                    )
+                    ai_comments = values.get("comments", [])
+                    logger.info("── HITL pause before summarizer ──")
+                    for c in ai_comments:
+                        owasp = f" [{c.get('owasp_id')}]" if c.get("owasp_id") else ""
+                        sev = (
+                            f" ({c.get('severity', '').upper()})"
+                            if c.get("severity")
+                            else ""
+                        )
+                        logger.info(
+                            "  %s%s %s:%s — %s",
+                            sev,
+                            owasp,
+                            c.get("path"),
+                            c.get("line"),
+                            c.get("body"),
+                        )
+                    decision = (
+                        (
+                            await _prompt_user(
+                                "Approve review? [y]es / [e]dit summary / [n]o: "
+                            )
+                        )
+                        .strip()
+                        .lower()
+                    )
+                    if decision in {"n", "no"}:
+                        logger.info("HITL: review aborted by user.")
+                        return {"status": "ok"}
+                    if decision in {"e", "edit"}:
+                        summary_override = await _collect_multiline(
+                            "Enter summary (finish with a single '.' line):"
+                        )
+                        if summary_override:
+                            await reviewer_app.aupdate_state(
+                                config, {"summary_override": summary_override}
+                            )
+                    final_output = await reviewer_app.ainvoke(
+                        None, config=config, interrupt_before=[]
+                    )
 
-                ai_summary = final_output["messages"][-1].content
                 ai_comments = final_output.get("comments", [])
+                ai_summary = final_output["messages"][-1].content
+                if _looks_like_json(ai_summary):
+                    fallback = _build_summary_from_comments(ai_comments)
+                    if fallback:
+                        ai_summary = fallback
 
                 logger.info("── review complete  issues=%d ──", len(ai_comments))
                 for c in ai_comments:

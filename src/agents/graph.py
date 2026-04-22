@@ -98,5 +98,5 @@ builder.add_edge("retry", "style_analyst")
 builder.add_edge("summarizer", END)
 
 
-def build_reviewer_app(checkpointer):
-    return builder.compile(checkpointer=checkpointer)
+def build_reviewer_app(checkpointer, *, interrupt_before=None):
+    return builder.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)
