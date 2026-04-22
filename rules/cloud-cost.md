@@ -1,0 +1,7 @@
+- [COST01] Avoid Provisioned Concurrency for Lambda unless p99 latency is a documented SLA requirement; it adds constant cost regardless of traffic
+- [COST02] Prefer Graviton (arm64) instance types over x86_64 for compute-intensive workloads; price/performance ratio is 20-40% better
+- [COST03] All S3 buckets must have a lifecycle policy to transition infrequently accessed objects to S3-IA or Glacier after 30/90 days
+- [COST04] Use Spot Instances for stateless, fault-tolerant workloads (batch jobs, CI runners, ML training); never use On-Demand for these
+- [COST05] Set CloudWatch billing alerts and budget thresholds on every AWS account; no account should run without an alarm
+- [COST06] Prefer NAT Instance over NAT Gateway for dev/staging environments; NAT Gateway costs $32/month minimum regardless of traffic
+- [COST07] Right-size RDS instances based on CloudWatch CPU and memory metrics; over-provisioned DB instances are a common hidden cost

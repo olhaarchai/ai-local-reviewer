@@ -1,0 +1,8 @@
+- [PY001] Add type hints to all function signatures; use `from __future__ import annotations` for forward references
+- [PY002] Follow PEP 8: 4-space indentation, max 88 chars per line (Black default), snake_case for functions and variables
+- [PY003] Never use mutable default arguments (list, dict, set); use None and initialize inside the function body
+- [PY004] Use `pathlib.Path` instead of `os.path` for all file system operations
+- [PY005] Prefer f-strings over `.format()` or `%` formatting
+- [PY006] Use dataclasses or Pydantic models instead of plain dicts for structured data
+- [PY007] Always close file handles with a `with` statement; never rely on garbage collection
+- [PY008] Use `logging` instead of `print` for any output that is not user-facing CLI text

@@ -1,0 +1,8 @@
+- [TS001] Never use `any`; use `unknown` and narrow the type with type guards instead
+- [TS002] Prefer `interface` for object shapes and `type` for unions, intersections, and aliases
+- [TS003] Use Optional Chaining (`?.`) and Nullish Coalescing (`??`) to safely access nullable values
+- [TS004] Always declare explicit return types on exported functions and class methods
+- [TS005] Enable `strict: true` in tsconfig.json; never disable strictNullChecks
+- [TS006] Use `as const` for literal tuples and object literals that should not be widened
+- [TS007] Avoid type assertions (`as SomeType`) unless narrowing after a runtime check
+- [TS008] Use `readonly` on properties that should not be mutated after construction

@@ -1,0 +1,8 @@
+- [TF001] Always use a remote backend (S3/GCS) with state locking (DynamoDB/GCS lock) to prevent concurrent state corruption
+- [TF002] Do not hardcode provider versions inline; declare all version constraints in a dedicated `versions.tf` file
+- [TF003] Mark all secret variables with `sensitive = true` to prevent them from appearing in plan output
+- [TF004] Use `lifecycle { prevent_destroy = true }` for stateful resources such as databases and S3 buckets
+- [TF005] Never use `Resource: *` in IAM policies created by Terraform; always scope to the minimum required ARNs
+- [TF006] Every reusable module must have a `README.md` describing input variables, output values, and usage examples
+- [TF007] Run `terraform fmt` and `terraform validate` in CI on every pull request; fail the pipeline on errors
+- [TF008] Use `terraform plan -out=plan.tfplan` and apply from the saved plan to ensure consistency between review and apply

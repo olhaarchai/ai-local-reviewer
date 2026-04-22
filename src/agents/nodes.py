@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -12,6 +13,18 @@ from src.agents.state import ReviewerState
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
+
+
+def _load_prompt(filename: str) -> str:
+    path = _PROMPTS_DIR / filename
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.warning("[nodes] Prompt file not found: %s", path)
+        return ""
+
 
 llm_security = ChatOllama(
     model=os.getenv("OLLAMA_MODEL_SECURITY"), temperature=0, format="json"
@@ -27,27 +40,34 @@ _LINE_RULE = (
     "If you are unsure of the exact line number, skip the comment — do NOT guess."
 )
 
+_RULE_ID_INSTRUCTION = (
+    "If a finding matches an ADDITIONAL PROJECT RULE, "
+    "start the 'body' field with the Rule ID in brackets, "
+    "e.g., '[TS001] Use unknown instead of any'."
+)
+
 _SECURITY_FORMAT = (
     "Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\n"
     'Format: [{"path": "file.ts", "line": 10, "owasp_id": "A03:2021", '
     '"severity": "High", "body": "description"}]\n'
-    "Severity values: Critical, High, Medium, Low.\n" + _LINE_RULE
+    "Severity values: Critical, High, Medium, Low.\n"
+    + _LINE_RULE
+    + "\n"
+    + _RULE_ID_INSTRUCTION
 )
 
 _STYLE_FORMAT = (
     "Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\n"
-    'Format: [{"path": "file.ts", "line": 10, "body": "description"}]\n' + _LINE_RULE
+    'Format: [{"path": "file.ts", "line": 10, "body": "description"}]\n'
+    + _LINE_RULE
+    + "\n"
+    + _RULE_ID_INSTRUCTION
 )
 
-_OWASP_FOCUS = (
-    "Focus on the following OWASP Top 10 (2021) categories:\n"
-    "- A01:2021 Broken Access Control — missing auth checks, IDOR, privilege escalation\n"
-    "- A02:2021 Cryptographic Failures — plaintext secrets, weak hashing, hardcoded keys\n"
-    "- A03:2021 Injection — SQL, command, NoSQL injection via string concatenation\n"
-    "- A05:2021 Security Misconfiguration — debug flags, open CORS, exposed stack traces\n"
-    "- A07:2021 Identification and Authentication Failures — missing token validation, insecure sessions\n"
-    "- A10:2021 Server-Side Request Forgery — unvalidated URLs passed to HTTP clients\n"
-)
+_SECURITY_PERSONA = _load_prompt("security-persona.md")
+_STYLE_PERSONA = _load_prompt("style-persona.md")
+_SUMMARIZER_PERSONA = _load_prompt("summarizer-persona.md")
+_OWASP_FOCUS = _load_prompt("owasp-focus.md")
 
 _NOISE_FILE_PATTERNS = (
     "package-lock.json",
@@ -106,16 +126,18 @@ async def security_analyst_node(state: ReviewerState):
     model_name = os.getenv("OLLAMA_MODEL_SECURITY")
     logger.info("[security_analyst] Starting OWASP audit with model=%s", model_name)
 
+    system_content = _SECURITY_PERSONA + _OWASP_FOCUS + "\n" + _SECURITY_FORMAT
+    guidelines = state.get("guidelines", [])
+    if guidelines:
+        rules_text = "\n".join(f"- {r}" for r in guidelines)
+        system_content += (
+            f"\n\nADDITIONAL PROJECT RULES (enforce these too):\n{rules_text}"
+        )
+        logger.info("[security_analyst] Injected %d project rules", len(guidelines))
+
     response = await llm_security.ainvoke(
         [
-            SystemMessage(
-                content=(
-                    "You are an Expert Security Auditor performing an OWASP Top 10 (2021) code review.\n"
-                    + _OWASP_FOCUS
-                    + "\n"
-                    + _SECURITY_FORMAT
-                )
-            ),
+            SystemMessage(content=system_content),
             HumanMessage(content=f"DIFF:\n{state['diff']}"),
         ]
     )
@@ -134,14 +156,18 @@ async def style_analyst_node(state: ReviewerState):
     model_name = os.getenv("OLLAMA_MODEL_STYLE")
     logger.info("[style_analyst] Starting with model=%s", model_name)
 
+    system_content = _STYLE_PERSONA + _STYLE_FORMAT
+    guidelines = state.get("guidelines", [])
+    if guidelines:
+        rules_text = "\n".join(f"- {r}" for r in guidelines)
+        system_content += (
+            f"\n\nADDITIONAL PROJECT RULES (enforce these too):\n{rules_text}"
+        )
+        logger.info("[style_analyst] Injected %d project rules", len(guidelines))
+
     response = await llm_style.ainvoke(
         [
-            SystemMessage(
-                content=(
-                    "You are a Senior Developer. Review the code diff for style, naming conventions, "
-                    "and best practices. " + _STYLE_FORMAT
-                )
-            ),
+            SystemMessage(content=system_content),
             HumanMessage(content=f"DIFF:\n{state['diff']}"),
         ]
     )
@@ -174,9 +200,7 @@ async def summary_node(state: ReviewerState):
 
     response = await llm_fast.ainvoke(
         [
-            SystemMessage(
-                content="You are a senior engineering lead. Write a concise executive summary of the PR review findings."
-            ),
+            SystemMessage(content=_SUMMARIZER_PERSONA),
             HumanMessage(content=f"REVIEWS:\n{combined}"),
         ]
     )

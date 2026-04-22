@@ -1,0 +1,7 @@
+- [AWS01] Set explicit memory limit and timeout for every Lambda function; never rely on defaults
+- [AWS02] Add a Dead Letter Queue (DLQ) to all async Lambda invocations to capture failed events
+- [AWS03] Never store secrets in Lambda environment variables; use AWS Secrets Manager or Parameter Store
+- [AWS04] Use Lambda Layers for shared dependencies to reduce deployment package size and improve cold start times
+- [AWS05] Always enable X-Ray tracing on Lambda functions in production for distributed tracing
+- [AWS06] Use event source mapping with batch size and bisect-on-error for SQS-triggered Lambdas
+- [AWS07] Set reserved concurrency on critical Lambdas to prevent noisy-neighbor throttling

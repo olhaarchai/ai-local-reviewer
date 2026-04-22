@@ -1,0 +1,8 @@
+- [AI001] Never use global variables to store training datasets or model weights; use context managers or classes to scope their lifetime
+- [AI002] Always set random seeds for `numpy`, `torch`, and `random` at the entry point of each script for reproducibility
+- [AI003] Wrap GPU-intensive operations in `try...finally` to ensure `torch.cuda.empty_cache()` is called on failure
+- [AI004] Store long LLM prompts in separate `.txt` or `.yaml` files; never hardcode them as strings inside logic modules
+- [AI005] Every change to an agent's logic must include a corresponding update to the evaluation dataset (Golden Set)
+- [AI006] Use structured output schemas (Pydantic models) for all LLM responses; never parse free-form text manually
+- [AI007] Log LLM calls with token counts, latency, and model version; use an observability tool such as Langfuse or LangSmith
+- [AI008] Pin model names explicitly in config; never rely on a "latest" alias that can silently change behavior

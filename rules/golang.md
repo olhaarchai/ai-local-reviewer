@@ -1,0 +1,8 @@
+- [GO001] Never ignore errors with `_`; always handle or propagate them with a meaningful context message
+- [GO002] Every goroutine must have a clear exit condition or be tied to `context.Context` cancellation to prevent goroutine leaks
+- [GO003] Always `defer mu.Unlock()` immediately after `mu.Lock()` to prevent deadlocks on early returns
+- [GO004] Do not use pointers for small structs unless mutating the original or signaling the absence of a value with `nil`
+- [GO005] Use `errors.Is` and `errors.As` for error inspection; never compare error strings directly
+- [GO006] Table-driven tests are required for functions with multiple input/output cases to improve coverage and readability
+- [GO007] Use `golangci-lint` in CI with a shared `.golangci.yml` configuration; fix all reported issues before merging
+- [GO008] Format all code with `gofmt`; CI should reject unformatted code

@@ -8,3 +8,4 @@ class ReviewerState(TypedDict):
     diff: str
     comments: Annotated[list, operator.add]
     messages: Annotated[list, add_messages]
+    guidelines: list

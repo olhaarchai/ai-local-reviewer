@@ -1,0 +1,7 @@
+- [API01] All `PUT` and `DELETE` requests must be idempotent; repeated calls with the same input must produce the same result
+- [API02] Always version APIs via URL prefix (`/v1/...`) or `Accept` header version; never make breaking changes to an existing version
+- [API03] Any endpoint returning a list must implement `limit/offset` or cursor-based pagination; never return unbounded collections
+- [API04] Use a consistent JSON error structure: `{ "error": { "code": 400, "message": "Human-readable description" } }`
+- [API05] Return appropriate HTTP status codes: 201 for creation, 204 for successful deletion, 422 for validation errors
+- [API06] Document all endpoints with OpenAPI/Swagger; every request body and response schema must be defined
+- [API07] Use nouns for resource paths, not verbs: `/users/{id}` not `/getUser/{id}`

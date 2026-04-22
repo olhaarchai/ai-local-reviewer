@@ -1,0 +1,7 @@
+- [DB001] Add indexes `CONCURRENTLY` in PostgreSQL migrations to avoid table locks on large tables
+- [DB002] Never use `SELECT *` in production queries; always list the columns you need explicitly
+- [DB003] All foreign key columns must have an index to prevent full table scans on join and cascade operations
+- [DB004] Validate vector dimension (`dim`) before inserting into a Milvus collection; mismatched dims cause silent failures
+- [DB005] Use database transactions for operations that must be atomic; never partially commit related changes
+- [DB006] Always use parameterized queries or prepared statements; never build SQL by string concatenation
+- [DB007] Set `statement_timeout` and `lock_timeout` in PostgreSQL for all long-running queries to prevent blocking

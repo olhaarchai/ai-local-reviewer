@@ -1,0 +1,7 @@
+- [DKR01] Never use `:latest`; always pin images to a specific tag (e.g. `node:20-alpine`) for reproducible builds
+- [DKR02] Use multi-stage builds for production images to minimize final image size and attack surface
+- [DKR03] Never run application processes as root; add a `USER nonroot` instruction in the Dockerfile
+- [DKR04] `.dockerignore` must exclude `.env`, `.git`, `node_modules`, and build artifacts from the build context
+- [DKR05] Use `COPY --chown=nonroot:nonroot` instead of running `chmod` after copying files
+- [DKR06] Do not install development dependencies in production images; separate dev and prod dependency installation stages
+- [DKR07] Use `HEALTHCHECK` instructions so orchestrators can detect unhealthy containers

@@ -12,9 +12,17 @@ from src.utils.github_client import GitHubClient
 load_dotenv()
 
 logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
 )
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+logging.getLogger("pymilvus").setLevel(logging.WARNING)
+logging.getLogger("PIL").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -52,50 +60,43 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
 
         # Logic for triggered review
         if action in ["review_requested", "synchronize"]:
-            # Check for bot mention or request (simplified logic here)
-            print(f"[*] Processing AI Review for PR #{pr_number}...")
-
+            logger.info("── PR #%s  %s  action=%s ──", pr_number, repo_name, action)
             gh_client = GitHubClient(installation_id)
 
             try:
                 diff_text = await gh_client.get_pull_request_diff(repo_name, pr_number)
-
-                # 2. Prepare the initial State for LangGraph
                 initial_state = {"diff": diff_text, "comments": [], "messages": []}
-
-                # 3. RUN THE BRAINS (Ollama + LangGraph)
-                # This will trigger Security (Qwen) and Style (Mistral) analysts
                 final_output = await reviewer_app.ainvoke(initial_state)
 
-                # 4. Extract the results
                 ai_summary = final_output["messages"][-1].content
                 ai_comments = final_output.get("comments", [])
 
-                print("\n" + "=" * 50)
-                print(f"AI REVIEW COMPLETE FOR PR #{pr_number}")
-                print(f"Structured issues found: {len(ai_comments)}")
+                logger.info("── review complete  issues=%d ──", len(ai_comments))
                 for c in ai_comments:
                     owasp = f" [{c.get('owasp_id')}]" if c.get("owasp_id") else ""
-                    severity = (
+                    sev = (
                         f" ({c.get('severity', '').upper()})"
                         if c.get("severity")
                         else ""
                     )
-                    print(
-                        f"  {severity}{owasp} {c.get('path')}:{c.get('line')} — {c.get('body')}"
+                    logger.info(
+                        "  %s%s %s:%s — %s",
+                        sev,
+                        owasp,
+                        c.get("path"),
+                        c.get("line"),
+                        c.get("body"),
                     )
-                print("\nSUMMARY:")
-                print(ai_summary)
-                print("=" * 50 + "\n")
+                logger.info("── summary ──\n%s", ai_summary)
 
                 if ai_comments:
-                    print(f"[*] Posting {len(ai_comments)} comments to GitHub...")
+                    logger.info("posting %d comment(s) to GitHub…", len(ai_comments))
                     await gh_client.post_review(
                         repo_name, pr_number, ai_summary, ai_comments
                     )
-                    print("[+] Review posted successfully!")
+                    logger.info("review posted ✓")
 
             except Exception as e:
-                print(f"[!] Error during AI Review: {e}")
+                logger.exception("review failed for PR #%s: %s", pr_number, e)
 
     return {"status": "ok"}
