@@ -1,8 +1,11 @@
+import logging
 import os
 import time
 
 import httpx
 import jwt
+
+logger = logging.getLogger(__name__)
 
 
 class GitHubClient:
@@ -13,19 +16,17 @@ class GitHubClient:
         self.base_url = "https://api.github.com"
 
     def _get_jwt(self) -> str:
-        """Create a signed JWT to prove identity to GitHub."""
         with open(self.private_key_path, "r") as f:
             private_key = f.read()
 
         payload = {
-            "iat": int(time.time()) - 60,  # Issued at (backdated 60s for safety)
-            "exp": int(time.time()) + (10 * 60),  # Expiration (10 mins)
+            "iat": int(time.time()) - 60,
+            "exp": int(time.time()) + (10 * 60),
             "iss": self.app_id,
         }
         return jwt.encode(payload, private_key, algorithm="RS256")
 
     async def get_token(self) -> str:
-        """Exchange JWT for an Installation Access Token."""
         jwt_token = self._get_jwt()
         headers = {
             "Authorization": f"Bearer {jwt_token}",
@@ -39,11 +40,10 @@ class GitHubClient:
             return response.json()["token"]
 
     async def get_pull_request_diff(self, repo_name: str, pr_number: int) -> str:
-        """Fetch the PR changes in .diff format."""
         token = await self.get_token()
         headers = {
             "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3.diff",  # This header is crucial!
+            "Accept": "application/vnd.github.v3.diff",
         }
 
         async with httpx.AsyncClient() as client:
@@ -59,12 +59,12 @@ class GitHubClient:
         body: str,
         comments: list,
     ) -> dict:
-        """Post a PR review with inline comments to GitHub."""
         token = await self.get_token()
         headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json",
         }
+        url = f"{self.base_url}/repos/{repo_name}/pulls/{pr_number}/reviews"
 
         github_comments = [
             {"path": c["path"], "line": int(c["line"]), "body": c["body"]}
@@ -72,21 +72,41 @@ class GitHubClient:
             if c.get("path") and c.get("line") and c.get("body")
         ]
 
-        payload = {
-            "body": body,
-            "event": "COMMENT",
-            "comments": github_comments,
-        }
-
         async with httpx.AsyncClient(headers=headers) as client:
-            url = f"{self.base_url}/repos/{repo_name}/pulls/{pr_number}/reviews"
-            response = await client.post(url, json=payload)
-            if response.status_code != 200:
-                import logging
-                logging.getLogger(__name__).error(
+            response = await client.post(
+                url,
+                json={
+                    "body": body,
+                    "event": "COMMENT",
+                    "comments": github_comments,
+                },
+            )
+
+            if response.status_code == 422:
+                logger.warning(
+                    "[github_client] 422 on inline comments (%s), falling back to summary-only",
+                    response.json().get("errors"),
+                )
+                # Append issues list to body so nothing is lost
+                issues_md = "\n".join(
+                    f"- `{c['path']}:{c['line']}` — {c['body']}"
+                    for c in github_comments
+                )
+                fallback_body = f"{body}\n\n---\n**Findings (inline comments unavailable):**\n{issues_md}"
+                response = await client.post(
+                    url,
+                    json={
+                        "body": fallback_body,
+                        "event": "COMMENT",
+                    },
+                )
+
+            if not response.is_success:
+                logger.error(
                     "[github_client] post_review failed %d: %s",
                     response.status_code,
                     response.text,
                 )
+
             response.raise_for_status()
             return response.json()

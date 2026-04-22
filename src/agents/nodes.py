@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -20,7 +21,46 @@ llm_style = ChatOllama(
 )
 llm_fast = ChatOllama(model=os.getenv("OLLAMA_MODEL_FAST"), temperature=0.1)
 
-_FORMAT = 'Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\nFormat: [{"path": "file_path", "line": 10, "body": "description"}]'
+_FORMAT = (
+    "Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\n"
+    'Format: [{"path": "file_path", "line": 10, "body": "description"}]\n'
+    'CRITICAL: Only comment on lines that start with "+" in the diff. '
+    "Use the hunk header (@@ -L,l +L,l @@) to calculate the correct absolute line number. "
+    "If you are unsure of the exact line number, skip the comment entirely — do NOT guess."
+)
+
+_NOISE_FILE_PATTERNS = (
+    "package-lock.json",
+    "yarn.lock",
+    "Pipfile.lock",
+    "poetry.lock",
+    ".snap",
+    "dist/",
+    ".next/",
+    ".svg",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".woff",
+    ".ttf",
+    ".eot",
+)
+
+
+def filter_diff(raw_diff: str) -> str:
+    chunks = re.split(r"(?=diff --git )", raw_diff)
+    kept = []
+    for chunk in chunks:
+        if not chunk.strip():
+            continue
+        header = chunk.split("\n")[0]
+        if any(p in header for p in _NOISE_FILE_PATTERNS):
+            logger.info("[filter_diff] Dropped: %s", header)
+        else:
+            kept.append(chunk)
+    return "".join(kept)
 
 
 def _parse_json_response(content: str, node: str) -> list:
@@ -32,6 +72,14 @@ def _parse_json_response(content: str, node: str) -> list:
         raise ValueError(f"Unexpected JSON type: {type(parsed)}")
     logger.info("[%s] Parsed %d structured comments", node, len(parsed))
     return parsed
+
+
+def filter_node(state: ReviewerState) -> dict:
+    filtered = filter_diff(state["diff"])
+    logger.info(
+        "[filter_node] Diff size: %d → %d chars", len(state["diff"]), len(filtered)
+    )
+    return {"diff": filtered}
 
 
 async def security_analyst_node(state: ReviewerState):
