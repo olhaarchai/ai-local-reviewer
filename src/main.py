@@ -6,16 +6,15 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-
-# 1. Import your compiled LangGraph app
 from src.agents.graph import reviewer_app
 from src.utils.github_client import GitHubClient
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 app = FastAPI()
 
@@ -69,15 +68,24 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                 final_output = await reviewer_app.ainvoke(initial_state)
 
                 # 4. Extract the results
-                # For now, let's just print the summary from the 'summarizer' node
-                ai_feedback = final_output["messages"][-1].content
+                ai_summary = final_output["messages"][-1].content
+                ai_comments = final_output.get("comments", [])
 
                 print("\n" + "=" * 50)
                 print(f"AI REVIEW COMPLETE FOR PR #{pr_number}")
-                print(ai_feedback)
+                print(f"Structured issues found: {len(ai_comments)}")
+                for c in ai_comments:
+                    print(f"  [{c.get('path')}:{c.get('line')}] {c.get('body')}")
+                print("\nSUMMARY:")
+                print(ai_summary)
                 print("=" * 50 + "\n")
 
-                # TODO: Pass the final_output['comments'] to gh_client to post them on GitHub
+                if ai_comments:
+                    print(f"[*] Posting {len(ai_comments)} comments to GitHub...")
+                    await gh_client.post_review(
+                        repo_name, pr_number, ai_summary, ai_comments
+                    )
+                    print("[+] Review posted successfully!")
 
             except Exception as e:
                 print(f"[!] Error during AI Review: {e}")

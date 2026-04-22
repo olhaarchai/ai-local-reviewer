@@ -51,3 +51,42 @@ class GitHubClient:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             return response.text
+
+    async def post_review(
+        self,
+        repo_name: str,
+        pr_number: int,
+        body: str,
+        comments: list,
+    ) -> dict:
+        """Post a PR review with inline comments to GitHub."""
+        token = await self.get_token()
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+
+        github_comments = [
+            {"path": c["path"], "line": int(c["line"]), "body": c["body"]}
+            for c in comments
+            if c.get("path") and c.get("line") and c.get("body")
+        ]
+
+        payload = {
+            "body": body,
+            "event": "COMMENT",
+            "comments": github_comments,
+        }
+
+        async with httpx.AsyncClient(headers=headers) as client:
+            url = f"{self.base_url}/repos/{repo_name}/pulls/{pr_number}/reviews"
+            response = await client.post(url, json=payload)
+            if response.status_code != 200:
+                import logging
+                logging.getLogger(__name__).error(
+                    "[github_client] post_review failed %d: %s",
+                    response.status_code,
+                    response.text,
+                )
+            response.raise_for_status()
+            return response.json()
