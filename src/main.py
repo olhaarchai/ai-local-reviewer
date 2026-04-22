@@ -1,23 +1,29 @@
 import hashlib
 import hmac
+import logging
 import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+# 1. Import your compiled LangGraph app
+from src.agents.graph import reviewer_app
 from src.utils.github_client import GitHubClient
 
 load_dotenv()
 
 app = FastAPI()
 
-# Get your secret from .env
 WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 BOT_NAME = os.getenv("GITHUB_BOT_NAME")
 
 
 async def verify_signature(request: Request):
-    """Verify that the payload comes from GitHub."""
     signature = request.headers.get("X-Hub-Signature-256")
     if not signature:
         raise HTTPException(status_code=401, detail="Signature missing")
@@ -34,13 +40,10 @@ async def verify_signature(request: Request):
 
 @app.post("/webhook")
 async def handle_webhook(request: Request, x_github_event: str = Header(None)):
-    # 1. Security check
     await verify_signature(request)
 
     payload = await request.json()
     action = payload.get("action")
-
-    print(f"--- Received Event: {x_github_event} | Action: {action} ---")
 
     if x_github_event == "pull_request":
         pr_data = payload.get("pull_request")
@@ -48,36 +51,35 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
         repo_name = payload.get("repository", {}).get("full_name")
         installation_id = payload.get("installation", {}).get("id")
 
-        if action == "review_requested":
-            # Check if bot was requested
-            requested_reviewer = payload.get("requested_reviewer", {}).get("login")
-            print(f"Review requested for PR #{pr_number} in {repo_name}")
-            print(f"Target Reviewer: {requested_reviewer}")
+        # Logic for triggered review
+        if action in ["review_requested", "synchronize"]:
+            # Check for bot mention or request (simplified logic here)
+            print(f"[*] Processing AI Review for PR #{pr_number}...")
 
-            if (
-                requested_reviewer == BOT_NAME
-                or requested_reviewer == f"{BOT_NAME}[bot]"
-            ):
-                print(f"Bot {BOT_NAME} invited to review PR #{pr_number}")
+            gh_client = GitHubClient(installation_id)
 
-                # 2. Initialize GitHub Client
-                gh_client = GitHubClient(installation_id)
+            try:
+                diff_text = await gh_client.get_pull_request_diff(repo_name, pr_number)
 
-                # 3. Fetch the code changes
-                try:
-                    diff_text = await gh_client.get_pull_request_diff(
-                        repo_name, pr_number
-                    )
-                    print(f"Successfully fetched diff for PR #{pr_number}")
-                    print(
-                        f"Diff sample: {diff_text[:200]}..."
-                    )  # Print a small sample for debugging
+                # 2. Prepare the initial State for LangGraph
+                initial_state = {"diff": diff_text, "comments": [], "messages": []}
 
-                    # TODO: Send diff_text to LangGraph
-                except Exception as e:
-                    print(f"Error fetching diff: {e}")
+                # 3. RUN THE BRAINS (Ollama + LangGraph)
+                # This will trigger Security (Qwen) and Style (Mistral) analysts
+                final_output = await reviewer_app.ainvoke(initial_state)
 
-        elif action == "synchronize":
-            print(f"New code pushed to PR #{pr_number}. Updating review...")
+                # 4. Extract the results
+                # For now, let's just print the summary from the 'summarizer' node
+                ai_feedback = final_output["messages"][-1].content
+
+                print("\n" + "=" * 50)
+                print(f"AI REVIEW COMPLETE FOR PR #{pr_number}")
+                print(ai_feedback)
+                print("=" * 50 + "\n")
+
+                # TODO: Pass the final_output['comments'] to gh_client to post them on GitHub
+
+            except Exception as e:
+                print(f"[!] Error during AI Review: {e}")
 
     return {"status": "ok"}
