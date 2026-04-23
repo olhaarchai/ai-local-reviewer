@@ -271,6 +271,9 @@ async def security_analyst_node(state: ReviewerState):
     started_at = time.perf_counter()
 
     system_content = _SECURITY_PERSONA + _OWASP_FOCUS + "\n" + _SECURITY_FORMAT
+    stack_context = _state_get(state, "stack_context", "")
+    if stack_context:
+        system_content = f"PR CONTEXT:\n{stack_context}\n\n" + system_content
     guidelines = _state_get(state, "guidelines", [])
     if guidelines:
         rules_text = "\n".join(f"- {r}" for r in guidelines)
@@ -317,6 +320,9 @@ async def style_analyst_node(state: ReviewerState):
     started_at = time.perf_counter()
 
     system_content = _STYLE_PERSONA + _STYLE_FORMAT
+    stack_context = _state_get(state, "stack_context", "")
+    if stack_context:
+        system_content = f"PR CONTEXT:\n{stack_context}\n\n" + system_content
     guidelines = _state_get(state, "guidelines", [])
     if guidelines:
         rules_text = "\n".join(f"- {r}" for r in guidelines)
