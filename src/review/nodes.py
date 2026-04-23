@@ -139,7 +139,13 @@ def _state_get(state: ReviewerState | dict, key: str, default: Any = None) -> An
     return getattr(state, key, default)
 
 
-_RULE_ID_PATTERN = re.compile(r"^\[(?P<rule>[A-Z]{2,}\d{3,})\]")
+# Match both numeric-suffix IDs from our rules corpus ([PY001], [OW123])
+# AND model-fabricated dashed/underscored forms ([OW-SQL], [CI-001],
+# [TF_STATE]) so the latter also hit the guideline-membership check and
+# get rejected when absent from rules/*.md.
+_RULE_ID_PATTERN = re.compile(
+    r"^\[(?P<rule>[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)?(?:\d+)?)\]"
+)
 _GUIDELINE_RULE_PATTERN = re.compile(r"\[(?P<rule>[A-Za-z]+[0-9]{3,})\]")
 _OBVIOUS_PATTERNS = (
     re.compile(r"\bTODO\b", re.IGNORECASE),

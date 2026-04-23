@@ -150,39 +150,32 @@ def _extract_summary(state: Any) -> str:
     return "_(no summary)_"
 
 
-def write_review_log(
+def render_review_md(
     repo_name: str,
     pr_number: int | str,
     state: Any,
     hitl_action: str,
     hitl_feedback: str | None = None,
-    output_dir: str | Path | None = None,
-) -> Path | None:
-    """Serialise a full review run to markdown. Returns the path or None on error."""
-    try:
-        out_dir = Path(output_dir or settings.output_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{_slug(repo_name)}-pr{pr_number}-{_timestamp()}.md"
-        path = out_dir / filename
+) -> str:
+    """Render the per-PR markdown body. Pure — no IO."""
+    guidelines = _state_get(state, "guidelines", []) or []
+    lint_findings = _state_get(state, "lint_findings", []) or []
+    raw_responses = _state_get(state, "raw_responses", []) or []
+    critic_issues = _state_get(state, "critic_issues", []) or []
+    comments = _state_get(state, "comments", []) or []
+    iterations = _state_get(state, "iterations", 0)
+    stack_context = _state_get(state, "stack_context", "") or ""
+    timings = _state_get(state, "timings", []) or []
 
-        guidelines = _state_get(state, "guidelines", []) or []
-        lint_findings = _state_get(state, "lint_findings", []) or []
-        raw_responses = _state_get(state, "raw_responses", []) or []
-        critic_issues = _state_get(state, "critic_issues", []) or []
-        comments = _state_get(state, "comments", []) or []
-        iterations = _state_get(state, "iterations", 0)
-        stack_context = _state_get(state, "stack_context", "") or ""
-        timings = _state_get(state, "timings", []) or []
+    models = (
+        f"- security: `{settings.ollama_model_security}`\n"
+        f"- style: `{settings.ollama_model_style}`\n"
+        f"- fast: `{settings.ollama_model_fast}`"
+    )
 
-        models = (
-            f"- security: `{settings.ollama_model_security}`\n"
-            f"- style: `{settings.ollama_model_style}`\n"
-            f"- fast: `{settings.ollama_model_fast}`"
-        )
+    feedback_block = f"\n> **Guidance:** {hitl_feedback}" if hitl_feedback else ""
 
-        feedback_block = f"\n> **Guidance:** {hitl_feedback}" if hitl_feedback else ""
-
-        md = f"""# Review — {repo_name} PR #{pr_number}
+    return f"""# Review — {repo_name} PR #{pr_number}
 
 Generated: `{_timestamp()}`
 
@@ -230,9 +223,51 @@ Generated: `{_timestamp()}`
 {_format_timings(timings)}
 """
 
-        path.write_text(md, encoding="utf-8")
-        logger.info("[review_log] Wrote %s", path)
-        return path
+
+def write_review_log(
+    repo_name: str,
+    pr_number: int | str,
+    state: Any,
+    hitl_action: str,
+    hitl_feedback: str | None = None,
+    output_dir: str | Path | None = None,
+) -> Path | None:
+    """Render markdown and persist via the save_review_log @tool.
+
+    Kept as the single call site for callers (webhook, tests) so the
+    public surface doesn't churn. Delegates to the tool for the write.
+    """
+    # Local import avoids circular: review_log_tool imports _slug/_timestamp
+    # from this module.
+    from src.tools.review_log_tool import save_review_log
+
+    try:
+        content = render_review_md(
+            repo_name, pr_number, state, hitl_action, hitl_feedback
+        )
+        # output_dir override is honoured by writing directly when set —
+        # the tool always uses settings.output_dir.
+        if output_dir is not None:
+            out_dir = Path(output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            path = out_dir / f"{_slug(repo_name)}-pr{int(pr_number)}-{_timestamp()}.md"
+            path.write_text(content, encoding="utf-8")
+            logger.info("[review_log] Wrote %s", path)
+            return path
+
+        result = save_review_log.invoke(
+            {
+                "repo_name": repo_name,
+                "pr_number": int(pr_number),
+                "hitl_action": hitl_action,
+                "hitl_feedback": hitl_feedback,
+                "content": content,
+            }
+        )
+        if isinstance(result, str) and result.startswith("Error:"):
+            logger.warning("[review_log] save_review_log reported: %s", result)
+            return None
+        return Path(result) if isinstance(result, str) else None
     except Exception as exc:  # noqa: BLE001 — logging must never break the caller
         logger.warning("[review_log] Failed to write log: %s", exc)
         return None
