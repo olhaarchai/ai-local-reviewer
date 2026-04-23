@@ -1,17 +1,18 @@
-import os
 
 from langchain.agents import create_agent
 from langchain_ollama import ChatOllama
 
-from src.agents.state import StyleReviewResult
-from src.agents.tools import read_url, web_search
+from src.review.state import StyleReviewResult
+from src.tools.web_tools import read_url, web_search
 
 
 def build_style_agent(system_prompt: str):
-    model_name = os.getenv("OLLAMA_MODEL_STYLE")
+    from src.core.config import settings
+
+    model_name = settings.ollama_model_style
     if not model_name:
         raise ValueError("OLLAMA_MODEL_STYLE is not set")
-    timeout = float(os.getenv("OLLAMA_REQUEST_TIMEOUT", "300"))
+    timeout = settings.ollama_request_timeout
     llm_style = ChatOllama(
         model=model_name,
         temperature=0.2,

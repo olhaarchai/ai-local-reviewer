@@ -1,12 +1,13 @@
 import logging
-import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from src.agents.nodes import (
+from src.core.config import settings
+from src.integrations.retriever import retriever_node
+from src.review.nodes import (
     critic_node,
     filter_node,
     retry_node,
@@ -14,8 +15,7 @@ from src.agents.nodes import (
     style_analyst_node,
     summary_node,
 )
-from src.agents.retriever import retriever_node
-from src.agents.state import ReviewerState
+from src.review.state import ReviewerState
 
 builder = StateGraph(ReviewerState)
 
@@ -39,7 +39,7 @@ def _route_after_critic(state: ReviewerState | dict) -> str:
 
 
 async def enter_checkpointer(exit_stack: AsyncExitStack):
-    postgres_dsn = os.getenv("CHECKPOINT_POSTGRES_DSN")
+    postgres_dsn = settings.checkpoint_postgres_dsn
     if postgres_dsn:
         try:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -51,9 +51,7 @@ async def enter_checkpointer(exit_stack: AsyncExitStack):
         return await exit_stack.enter_async_context(
             AsyncPostgresSaver.from_conn_string(postgres_dsn)
         )
-    sqlite_path = os.getenv(
-        "CHECKPOINT_SQLITE_PATH", ".data/reviewer_checkpoints.sqlite"
-    )
+    sqlite_path = settings.checkpoint_sqlite_path
     try:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
     except ModuleNotFoundError:

@@ -1,21 +1,18 @@
 import json
 import logging
-import os
 import re
 import time
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Overwrite
 
-from src.agents.security_agent import build_security_agent
-from src.agents.state import ReviewerState
-from src.agents.style_agent import build_style_agent
-from src.agents.summarizer_agent import build_summarizer_agent
+from src.review.agents.security_agent import build_security_agent
+from src.review.agents.style_agent import build_style_agent
+from src.review.agents.summarizer_agent import build_summarizer_agent
+from src.review.state import ReviewerState
 
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +265,9 @@ def filter_node(state: ReviewerState) -> dict:
 
 
 async def security_analyst_node(state: ReviewerState):
-    model_name = os.getenv("OLLAMA_MODEL_SECURITY")
+    from src.core.config import settings
+
+    model_name = settings.ollama_model_security
     logger.info("[security_analyst] Starting OWASP audit with model=%s", model_name)
     started_at = time.perf_counter()
 
@@ -309,7 +308,9 @@ async def security_analyst_node(state: ReviewerState):
 
 
 async def style_analyst_node(state: ReviewerState):
-    model_name = os.getenv("OLLAMA_MODEL_STYLE")
+    from src.core.config import settings
+
+    model_name = settings.ollama_model_style
     logger.info("[style_analyst] Starting with model=%s", model_name)
     started_at = time.perf_counter()
 
@@ -458,7 +459,9 @@ def retry_node(state: ReviewerState) -> dict:
 
 
 async def summary_node(state: ReviewerState):
-    use_llm = os.getenv("SUMMARIZER_USE_LLM", "false").lower() in {"1", "true", "yes"}
+    from src.core.config import settings
+
+    use_llm = settings.summarizer_use_llm
     comments = _state_get(state, "comments", [])
     summary_override = _state_get(state, "summary_override", None)
     logger.info(

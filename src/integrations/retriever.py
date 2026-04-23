@@ -1,5 +1,4 @@
 import logging
-import os
 import re
 from typing import Any
 
@@ -54,9 +53,11 @@ async def retriever_node(state: dict | Any) -> dict:
     try:
         from pymilvus import Collection, connections, utility
 
+        from src.core.config import settings
+
         connections.connect(
-            host=os.getenv("MILVUS_HOST", "localhost"),
-            port=os.getenv("MILVUS_PORT", "19530"),
+            host=settings.milvus_host,
+            port=str(settings.milvus_port),
         )
 
         if not utility.has_collection(_COLLECTION):

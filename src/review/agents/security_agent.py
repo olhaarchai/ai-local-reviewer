@@ -1,17 +1,18 @@
-import os
 
 from langchain.agents import create_agent
 from langchain_ollama import ChatOllama
 
-from src.agents.state import SecurityReviewResult
-from src.agents.tools import read_url, web_search
+from src.review.state import SecurityReviewResult
+from src.tools.web_tools import read_url, web_search
 
 
 def build_security_agent(system_prompt: str):
-    model_name = os.getenv("OLLAMA_MODEL_SECURITY")
+    from src.core.config import settings
+
+    model_name = settings.ollama_model_security
     if not model_name:
         raise ValueError("OLLAMA_MODEL_SECURITY is not set")
-    timeout = float(os.getenv("OLLAMA_REQUEST_TIMEOUT", "300"))
+    timeout = settings.ollama_request_timeout
     llm_security = ChatOllama(
         model=model_name,
         temperature=0,

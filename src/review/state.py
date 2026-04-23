@@ -1,8 +1,10 @@
 import operator
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Annotated, Any, Optional, Union
 
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, ConfigDict, Field
+
+from src.core.types import Severity, Timings
 
 
 class SecurityComment(BaseModel):
@@ -10,7 +12,7 @@ class SecurityComment(BaseModel):
     line: int
     body: str
     owasp_id: Optional[str] = None
-    severity: Optional[Literal["Critical", "High", "Medium", "Low"]] = None
+    severity: Optional[Severity] = None
 
 
 class StyleComment(BaseModel):
@@ -45,6 +47,4 @@ class ReviewerState(BaseModel):
     route: Optional[str] = None
     critic_issues: list[dict[str, Any]] = Field(default_factory=list)
     summary_override: Optional[str] = None
-    timings: Annotated[list[dict[str, float]], operator.add] = Field(
-        default_factory=list
-    )
+    timings: Annotated[Timings, operator.add] = Field(default_factory=list)

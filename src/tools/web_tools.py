@@ -1,5 +1,4 @@
 import logging
-import os
 
 import trafilatura
 from ddgs import DDGS
@@ -11,7 +10,9 @@ logger = logging.getLogger(__name__)
 @tool
 def web_search(query: str) -> str:
     """Search the web using DuckDuckGo. Returns a list of results with title, URL, and snippet."""
-    max_results = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+    from src.core.config import settings
+
+    max_results = settings.web_search_max_results
     logger.info("[web_search] query=%r max_results=%d", query, max_results)
     try:
         results = DDGS().text(query, max_results=max_results)
@@ -32,7 +33,9 @@ def web_search(query: str) -> str:
 @tool
 def read_url(url: str) -> str:
     """Fetch and extract the main text content from a URL. Returns up to READ_URL_MAX_CHARS characters."""
-    max_chars = int(os.getenv("READ_URL_MAX_CHARS", "5000"))
+    from src.core.config import settings
+
+    max_chars = settings.read_url_max_chars
     logger.info("[read_url] url=%s max_chars=%d", url, max_chars)
     try:
         downloaded = trafilatura.fetch_url(url)

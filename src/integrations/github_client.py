@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 
 import httpx
@@ -10,8 +9,10 @@ logger = logging.getLogger(__name__)
 
 class GitHubClient:
     def __init__(self, installation_id: int):
-        self.app_id = os.getenv("GITHUB_APP_ID")
-        self.private_key_path = os.getenv("GITHUB_PRIVATE_KEY_PATH")
+        from src.core.config import settings
+
+        self.app_id = settings.github_app_id
+        self.private_key_path = settings.github_private_key_path
         self.installation_id = installation_id
         self.base_url = "https://api.github.com"
 
