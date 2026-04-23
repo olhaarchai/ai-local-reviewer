@@ -12,6 +12,9 @@ def build_summarizer_agent(system_prompt: str):
     llm = ChatOllama(
         model=model_name,
         temperature=0.1,
+        num_ctx=settings.ollama_num_ctx_fast,
+        num_predict=settings.ollama_num_predict_fast,
+        keep_alive=settings.ollama_keep_alive,
         async_client_kwargs={"timeout": timeout},
         client_kwargs={"timeout": timeout},
     )
