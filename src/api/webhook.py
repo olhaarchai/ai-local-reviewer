@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from langgraph.errors import GraphInterrupt
@@ -83,6 +84,41 @@ def _build_summary_from_comments(comments: list[dict]) -> str | None:
             "- Address the findings above and re-run the review.",
         ]
     ).strip()
+
+
+def _parse_diff_lines(diff: str) -> dict[str, set[int]]:
+    valid: dict[str, set[int]] = {}
+    current_file: str | None = None
+    current_line = 0
+    for raw in diff.splitlines():
+        if raw.startswith("diff --git "):
+            parts = raw.split(" b/", 1)
+            current_file = parts[1].strip() if len(parts) == 2 else None
+            if current_file:
+                valid.setdefault(current_file, set())
+            current_line = 0
+        elif raw.startswith("@@") and current_file is not None:
+            m = re.search(r"\+(\d+)", raw)
+            current_line = int(m.group(1)) - 1 if m else 0
+        elif current_file is not None:
+            if raw.startswith("+++") or raw.startswith("---"):
+                continue
+            if raw.startswith("-"):
+                continue
+            current_line += 1
+            valid[current_file].add(current_line)
+    return valid
+
+
+def _dedup_comments(comments: list) -> list:
+    seen: set[tuple] = set()
+    out = []
+    for c in comments:
+        key = (str(c.get("path", "")), str(c.get("body", "")).strip())
+        if key not in seen:
+            seen.add(key)
+            out.append(c)
+    return out
 
 
 def _format_timings(timings: Timings | None) -> str | None:
@@ -220,6 +256,20 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                 logger.info("── summary ──\n%s", ai_summary)
 
                 if ai_comments:
+                    ai_comments = _dedup_comments(ai_comments)
+                    diff_lines = _parse_diff_lines(diff_text)
+                    valid = [
+                        c
+                        for c in ai_comments
+                        if c.get("path") in diff_lines
+                        and int(c.get("line") or 0) in diff_lines[c["path"]]
+                    ]
+                    dropped = len(ai_comments) - len(valid)
+                    if dropped:
+                        logger.info(
+                            "[webhook] Dropped %d comment(s) outside diff", dropped
+                        )
+                    ai_comments = valid
                     logger.info("posting %d comment(s) to GitHub…", len(ai_comments))
                     await gh_client.post_review(
                         repo_name, pr_number, ai_summary, ai_comments
