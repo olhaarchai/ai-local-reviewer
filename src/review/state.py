@@ -39,6 +39,7 @@ class ReviewerState(BaseModel):
     comments: Annotated[list[ReviewComment], operator.add] = Field(default_factory=list)
     messages: Annotated[list[Any], add_messages] = Field(default_factory=list)
     guidelines: list[str] = Field(default_factory=list)
+    stack_context: str = Field(default="")
     iterations: int = 0
     is_valid: bool = False
     critic_feedback: Optional[str] = None
