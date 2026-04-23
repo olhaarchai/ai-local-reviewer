@@ -6,7 +6,6 @@ import logging
 import re
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from langgraph.errors import GraphInterrupt
 from langgraph.types import Overwrite
 
 from src.core.config import settings
@@ -35,8 +34,24 @@ async def _collect_multiline(prompt: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _to_dict(comment) -> dict:
+    """Normalize a comment to a plain dict. Analysts may return Pydantic
+    SecurityComment/StyleComment; downstream formatting uses `.get()`."""
+    if isinstance(comment, dict):
+        return comment
+    if hasattr(comment, "model_dump"):
+        return comment.model_dump()
+    if hasattr(comment, "__dict__"):
+        return dict(comment.__dict__)
+    return {"body": str(comment)}
+
+
+def _comments_as_dicts(comments: list) -> list[dict]:
+    return [_to_dict(c) for c in comments or []]
+
+
 def _log_hitl_comments(comments: list) -> None:
-    for c in comments:
+    for c in _comments_as_dicts(comments):
         owasp = f" [{c.get('owasp_id')}]" if c.get("owasp_id") else ""
         sev = f" ({c.get('severity', '').upper()})" if c.get("severity") else ""
         logger.info(
@@ -52,21 +67,24 @@ def _log_hitl_comments(comments: list) -> None:
 async def _run_with_hitl(reviewer_app, initial_state, config) -> dict:
     """Run the graph with an approve/retry HITL gate before the summarizer.
 
-    Loops until the user approves. On retry, state is rewound as if the
-    internal retry_node had just executed — analysts run again, critic fires,
-    and the graph re-pauses before the summarizer.
+    LangGraph 1.x pauses at compile-time `interrupt_before` without raising —
+    `ainvoke` returns a partial result and `snapshot.next` points at the
+    paused node. We loop on that signal: prompt the user, resume on approve,
+    or rewind (as_node="retry") on retry.
     """
-    try:
-        return await reviewer_app.ainvoke(initial_state, config=config)
-    except GraphInterrupt:
-        pass
+    result = await reviewer_app.ainvoke(initial_state, config=config)
 
     while True:
         snapshot = await reviewer_app.aget_state(config)
+        if not snapshot.next:
+            return result
+
         values = snapshot.values if isinstance(snapshot.values, dict) else {}
         ai_comments = values.get("comments", [])
         logger.info(
-            "── HITL pause before summarizer (comments=%d) ──", len(ai_comments)
+            "── HITL pause before %s (comments=%d) ──",
+            snapshot.next[0] if snapshot.next else "?",
+            len(ai_comments),
         )
         _log_hitl_comments(ai_comments)
 
@@ -74,7 +92,10 @@ async def _run_with_hitl(reviewer_app, initial_state, config) -> dict:
 
         if decision in {"a", "approve", "y", "yes", ""}:
             logger.info("HITL: approved — proceeding to summarizer.")
-            return await reviewer_app.ainvoke(None, config=config, interrupt_before=[])
+            result = await reviewer_app.ainvoke(
+                None, config=config, interrupt_before=[]
+            )
+            continue
 
         if decision in {"r", "retry"}:
             guidance = (
@@ -99,10 +120,8 @@ async def _run_with_hitl(reviewer_app, initial_state, config) -> dict:
                 "HITL: retrying analysts%s",
                 " with guidance" if guidance else "",
             )
-            try:
-                return await reviewer_app.ainvoke(None, config=config)
-            except GraphInterrupt:
-                continue
+            result = await reviewer_app.ainvoke(None, config=config)
+            continue
 
         logger.info("HITL: unknown choice %r, expected 'a' or 'r'.", decision)
 
@@ -252,7 +271,7 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                 config = {"configurable": {"thread_id": thread_id}}
                 final_output = await _run_with_hitl(reviewer_app, initial_state, config)
 
-                ai_comments = final_output.get("comments", [])
+                ai_comments = _comments_as_dicts(final_output.get("comments", []))
                 ai_summary = final_output["messages"][-1].content
                 if _looks_like_json(ai_summary):
                     fallback = _build_summary_from_comments(ai_comments)
