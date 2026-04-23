@@ -8,10 +8,17 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Overwrite
 
+from src.integrations.retriever import (
+    _ALWAYS_INCLUDE,
+    _classify_file,
+    extract_pr_files,
+)
+from src.integrations.sparse_index import SPARSE_INDEX
 from src.review.agents.security_agent import build_security_agent
 from src.review.agents.style_agent import build_style_agent
 from src.review.agents.summarizer_agent import build_summarizer_agent
 from src.review.state import ReviewerState
+from src.tools.static_analysis import run_ruff_on_file
 
 logger = logging.getLogger(__name__)
 
@@ -149,11 +156,15 @@ _OBVIOUS_PATTERNS = (
 )
 
 
-def _extract_rule_ids(guidelines: list[str]) -> set[str]:
+def _extract_rule_ids(guidelines: list) -> set[str]:
     rule_ids: set[str] = set()
-    for guideline in guidelines:
-        for match in _GUIDELINE_RULE_PATTERN.finditer(guideline or ""):
-            rule_ids.add(match.group("rule"))
+    for g in guidelines:
+        if hasattr(g, "id"):
+            if g.id != "UNKNOWN":
+                rule_ids.add(g.id)
+        else:
+            for match in _GUIDELINE_RULE_PATTERN.finditer(str(g) or ""):
+                rule_ids.add(match.group("rule"))
     return rule_ids
 
 
@@ -245,6 +256,44 @@ def _diff_has_obvious_issues(diff: str) -> bool:
     return False
 
 
+def _build_added_line_map(diff: str) -> dict[str, set[int]]:
+    """Map `path` → set of absolute line numbers that appear on `+` lines."""
+    added: dict[str, set[int]] = {}
+    current_path: str | None = None
+    current_line = 0
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current_path = line[6:]
+            added.setdefault(current_path, set())
+        elif line.startswith("@@"):
+            m = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
+            current_line = int(m.group(1)) if m else 0
+        elif line.startswith("+") and not line.startswith("+++"):
+            if current_path:
+                added[current_path].add(current_line)
+            current_line += 1
+        elif not line.startswith("-"):
+            current_line += 1
+    return added
+
+
+def _build_added_content_map(diff: str) -> dict[str, str]:
+    """Map `path` → joined added-line content (for lint/grep reasoning)."""
+    content: dict[str, list[str]] = {}
+    current_path: str | None = None
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current_path = line[6:]
+            content.setdefault(current_path, [])
+        elif line.startswith("+") and not line.startswith("+++"):
+            if current_path:
+                content[current_path].append(line[1:])
+    return {p: "\n".join(lines) for p, lines in content.items()}
+
+
+_BACKTICK_IDENT_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`")
+
+
 def filter_node(state: ReviewerState) -> dict:
     diff = _state_get(state, "diff", "")
     filtered = filter_diff(diff)
@@ -260,6 +309,7 @@ def filter_node(state: ReviewerState) -> dict:
         "iterations": 0,
         "is_valid": False,
         "summary_override": None,
+        "lint_findings": [],
     }
 
 
@@ -271,13 +321,26 @@ async def security_analyst_node(state: ReviewerState):
     started_at = time.perf_counter()
 
     system_content = _SECURITY_PERSONA + _OWASP_FOCUS + "\n" + _SECURITY_FORMAT
+    stack_context = _state_get(state, "stack_context", "")
+    if stack_context:
+        system_content = f"PR CONTEXT:\n{stack_context}\n\n" + system_content
     guidelines = _state_get(state, "guidelines", [])
     if guidelines:
-        rules_text = "\n".join(f"- {r}" for r in guidelines)
+        rules_text = "\n".join(
+            f"- {g.text if hasattr(g, 'text') else g}" for g in guidelines
+        )
         system_content += (
             f"\n\nADDITIONAL PROJECT RULES (enforce these too):\n{rules_text}"
         )
         logger.info("[security_analyst] Injected %d project rules", len(guidelines))
+    lint_findings = _state_get(state, "lint_findings", []) or []
+    if lint_findings:
+        lint_block = "\n".join(f"- {f}" for f in lint_findings)
+        system_content += (
+            "\n\nDETERMINISTIC PRE-FINDINGS (already ground-truth — you may cite these verbatim):\n"
+            + lint_block
+            + "\n"
+        )
     critic_feedback = _state_get(state, "critic_feedback", None)
     if critic_feedback:
         system_content += (
@@ -317,13 +380,26 @@ async def style_analyst_node(state: ReviewerState):
     started_at = time.perf_counter()
 
     system_content = _STYLE_PERSONA + _STYLE_FORMAT
+    stack_context = _state_get(state, "stack_context", "")
+    if stack_context:
+        system_content = f"PR CONTEXT:\n{stack_context}\n\n" + system_content
     guidelines = _state_get(state, "guidelines", [])
     if guidelines:
-        rules_text = "\n".join(f"- {r}" for r in guidelines)
+        rules_text = "\n".join(
+            f"- {g.text if hasattr(g, 'text') else g}" for g in guidelines
+        )
         system_content += (
             f"\n\nADDITIONAL PROJECT RULES (enforce these too):\n{rules_text}"
         )
         logger.info("[style_analyst] Injected %d project rules", len(guidelines))
+    lint_findings = _state_get(state, "lint_findings", []) or []
+    if lint_findings:
+        lint_block = "\n".join(f"- {f}" for f in lint_findings)
+        system_content += (
+            "\n\nDETERMINISTIC PRE-FINDINGS (already ground-truth — you may cite these verbatim):\n"
+            + lint_block
+            + "\n"
+        )
     critic_feedback = _state_get(state, "critic_feedback", None)
     if critic_feedback:
         system_content += (
@@ -355,18 +431,33 @@ async def style_analyst_node(state: ReviewerState):
     return payload
 
 
+def _reject(
+    comment: Any,
+    reason_code: str,
+    detail: str,
+    rejections: list[dict[str, Any]],
+    counts: dict[str, int],
+) -> None:
+    counts[reason_code] = counts.get(reason_code, 0) + 1
+    rejections.append({"comment": comment, "reason": f"{reason_code}: {detail}"})
+
+
 def critic_node(state: ReviewerState) -> dict:
+    """Prune hallucinated comments via deterministic checks (G1-G4) + rule ID guard.
+
+    Retry is only triggered when the comment list is empty AND the diff shows
+    obvious risk patterns — per plan §5.2, the critic's job is to prune, not regen.
+    """
     comments = _state_get(state, "comments", []) or []
     guidelines = _state_get(state, "guidelines", []) or []
     raw_responses = _state_get(state, "raw_responses", []) or []
     diff = _state_get(state, "diff", "")
     iterations = int(_state_get(state, "iterations", 0) or 0) + 1
 
-    guideline_rules = _extract_rule_ids(guidelines)
-    issues: list[dict[str, Any]] = []
-    feedback_lines: list[str] = []
-
+    # Zero-comments fallback: preserve the existing retry-on-miss behaviour.
     if not comments:
+        issues: list[dict[str, Any]] = []
+        feedback_lines: list[str] = []
         if raw_responses:
             issues.append(
                 {
@@ -391,65 +482,179 @@ def critic_node(state: ReviewerState) -> dict:
             feedback_lines.append(
                 "No findings returned despite obvious risk keywords in the diff."
             )
+        is_valid = len(issues) == 0
+        critic_feedback = "\n".join(feedback_lines).strip() or None
+        logger.info(
+            "[critic] Empty comments — %s with %d issue(s)",
+            "passed" if is_valid else "requesting retry",
+            len(issues),
+        )
+        return {
+            "is_valid": is_valid,
+            "critic_feedback": critic_feedback,
+            "critic_issues": issues,
+            "iterations": iterations,
+        }
+
+    added_lines = _build_added_line_map(diff)
+    added_content = _build_added_content_map(diff)
+    guideline_rules = _extract_rule_ids(guidelines)
+
+    survivors: list[Any] = []
+    rejections: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
 
     for comment in comments:
         path, line, body = _extract_comment_fields(comment)
-        if not path or line <= 0:
-            issues.append(
-                {
-                    "path": path or "unknown",
-                    "line": line,
-                    "rule_id": "FORMAT",
-                    "message": "Comment missing valid path/line.",
-                }
-            )
-            feedback_lines.append(
-                f"Comment missing valid path/line: {path or 'unknown'}:{line}."
-            )
-        if not body.strip():
-            issues.append(
-                {
-                    "path": path or "unknown",
-                    "line": line,
-                    "rule_id": "FORMAT",
-                    "message": "Comment body is empty.",
-                }
-            )
-            feedback_lines.append(
-                f"Comment body is empty for {path or 'unknown'}:{line}."
+        body_stripped = body.strip()
+
+        # Basic shape checks — skip empty / unparseable comments.
+        if not path or line <= 0 or not body_stripped:
+            _reject(
+                comment,
+                "FORMAT",
+                f"missing path/line/body ({path}:{line})",
+                rejections,
+                counts,
             )
             continue
-        rule_match = _RULE_ID_PATTERN.match(body.strip())
+
+        # G2: path must appear in the diff.
+        if path not in added_lines:
+            _reject(
+                comment,
+                "G2",
+                f"path '{path}' not in diff",
+                rejections,
+                counts,
+            )
+            continue
+
+        # G1: line must be a + line for that path.
+        if line not in added_lines[path]:
+            _reject(
+                comment,
+                "G1",
+                f"line {line} not in '+'-set for '{path}'",
+                rejections,
+                counts,
+            )
+            continue
+
+        # G3: any backtick-quoted identifier must appear in the file's added text.
+        identifiers = _BACKTICK_IDENT_RE.findall(body_stripped)
+        if identifiers:
+            file_added = added_content.get(path, "")
+            if not any(ident in file_added for ident in identifiers):
+                _reject(
+                    comment,
+                    "G3",
+                    f"none of {identifiers} found in added lines of '{path}'",
+                    rejections,
+                    counts,
+                )
+                continue
+
+        # G4 + guideline-ID check: if body starts with [RULEID], validate category.
+        rule_match = _RULE_ID_PATTERN.match(body_stripped)
         if rule_match:
             rule_id = rule_match.group("rule")
-            if guideline_rules and rule_id not in guideline_rules:
-                issues.append(
-                    {
-                        "path": path or "unknown",
-                        "line": line,
-                        "rule_id": rule_id,
-                        "message": "Rule ID not found in project guidelines.",
-                    }
-                )
-                feedback_lines.append(
-                    f"Rule ID [{rule_id}] is not present in project guidelines."
-                )
+            rule_meta = SPARSE_INDEX.lookup_by_id(rule_id)
+            expected_cat = _classify_file(path)
+            if rule_meta is None:
+                if guideline_rules and rule_id not in guideline_rules:
+                    _reject(
+                        comment,
+                        "UNKNOWN_RULE",
+                        f"rule [{rule_id}] unknown to index and guidelines",
+                        rejections,
+                        counts,
+                    )
+                    continue
+            else:
+                rule_cat = rule_meta.get("category")
+                if (
+                    expected_cat is not None
+                    and rule_cat != expected_cat
+                    and rule_cat not in _ALWAYS_INCLUDE
+                ):
+                    _reject(
+                        comment,
+                        "G4",
+                        f"rule [{rule_id}] category '{rule_cat}' != file cat '{expected_cat}'",
+                        rejections,
+                        counts,
+                    )
+                    continue
+                if guideline_rules and rule_id not in guideline_rules:
+                    _reject(
+                        comment,
+                        "GUIDELINE_MISS",
+                        f"rule [{rule_id}] not in retrieved guidelines",
+                        rejections,
+                        counts,
+                    )
+                    continue
 
-    is_valid = len(issues) == 0
-    critic_feedback = "\n".join(feedback_lines).strip() or None
+        survivors.append(comment)
 
-    logger.info(
-        "[critic] Validation %s with %d issue(s)",
-        "passed" if is_valid else "failed",
-        len(issues),
-    )
+    count_str = ", ".join(f"{k}:{v}" for k, v in sorted(counts.items())) or "none"
+    logger.info("[critic] survivors=%d rejected={%s}", len(survivors), count_str)
 
     return {
-        "is_valid": is_valid,
-        "critic_feedback": critic_feedback,
-        "critic_issues": issues,
+        "comments": Overwrite(value=survivors),
+        "is_valid": True,
+        "critic_feedback": None,
+        "critic_issues": [
+            {"comment": r["comment"], "reason": r["reason"]} for r in rejections
+        ],
         "iterations": iterations,
     }
+
+
+def linter_node(state: ReviewerState) -> dict:
+    """Run ruff over added-line content of .py files; stash findings in state.
+
+    Plan A scope: Python only. If ruff is missing or disabled, returns empty.
+    Findings are informational — they seed analysts with ground-truth, they
+    do NOT directly populate `comments` (that stays LLM-driven).
+    """
+    from src.core.config import settings
+
+    if not settings.linter_enabled:
+        return {}
+
+    diff = _state_get(state, "diff", "")
+    if not diff:
+        return {"lint_findings": []}
+
+    added_content = _build_added_content_map(diff)
+    pr_files = extract_pr_files(diff)
+    findings_out: list[str] = []
+    checked = 0
+
+    for path in pr_files:
+        if not path.endswith(".py"):
+            continue
+        content = added_content.get(path, "").strip()
+        if not content:
+            continue
+        checked += 1
+        raw = run_ruff_on_file(path, content)
+        for finding in raw:
+            # ruff JSON: {code, message, location:{row,column}, filename, ...}
+            code = finding.get("code") or "ruff"
+            msg = finding.get("message") or ""
+            loc = finding.get("location") or {}
+            row = loc.get("row") or 0
+            findings_out.append(f"{path}:{row} - [ruff:{code}] {msg}")
+
+    logger.info(
+        "[linter] py_files_checked=%d findings=%d",
+        checked,
+        len(findings_out),
+    )
+    return {"lint_findings": findings_out}
 
 
 def retry_node(state: ReviewerState) -> dict:

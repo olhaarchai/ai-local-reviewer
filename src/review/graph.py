@@ -10,6 +10,7 @@ from src.integrations.retriever import retriever_node
 from src.review.nodes import (
     critic_node,
     filter_node,
+    linter_node,
     retry_node,
     security_analyst_node,
     style_analyst_node,
@@ -79,13 +80,18 @@ builder.add_edge(START, "filter")
 builder.add_edge("filter", "retriever")
 
 if enabled_agents:
+    # Linter (ruff) runs between retriever and analysts — feeds lint_findings
+    # into their system prompts so the LLM doesn't rederive deterministic issues.
+    builder.add_node("linter", linter_node)
     builder.add_node("critic", critic_node)
     builder.add_node("retry", retry_node)
+
+    builder.add_edge("retriever", "linter")
 
     for key in enabled_agents:
         node_name, node_fn = agent_map[key]
         builder.add_node(node_name, node_fn)
-        builder.add_edge("retriever", node_name)
+        builder.add_edge("linter", node_name)
         builder.add_edge(node_name, "critic")
 
     builder.add_conditional_edges(

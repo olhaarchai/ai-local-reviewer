@@ -61,6 +61,8 @@ class Settings:
 
     milvus_host: str
     milvus_port: int
+    milvus_rules_per_category: int
+    milvus_score_threshold: float
 
     web_search_max_results: int
     read_url_max_chars: int
@@ -71,6 +73,12 @@ class Settings:
     enabled_agents: list[str]
 
     log_level: str
+
+    use_reranker: bool
+    reranker_model: str
+    dense_overfetch_multiplier: int
+    bm25_enabled: bool
+    linter_enabled: bool
 
 
 settings = Settings(
@@ -90,10 +98,17 @@ settings = Settings(
     ),
     milvus_host=os.getenv("MILVUS_HOST", "localhost"),
     milvus_port=_get_int("MILVUS_PORT", 19530),
+    milvus_rules_per_category=_get_int("MILVUS_RULES_PER_CATEGORY", 4),
+    milvus_score_threshold=_get_float("MILVUS_SCORE_THRESHOLD", 1.5),
     web_search_max_results=_get_int("WEB_SEARCH_MAX_RESULTS", 5),
     read_url_max_chars=_get_int("READ_URL_MAX_CHARS", 5000),
     max_critic_iterations=_get_int("MAX_CRITIC_ITERATIONS", 3),
     agent_recursion_limit=_get_int("AGENT_RECURSION_LIMIT", 2),
     enabled_agents=_get_csv("ENABLED_AGENTS", ["security", "style"]),
     log_level=os.getenv("LOG_LEVEL", "INFO"),
+    use_reranker=_get_bool("USE_RERANKER", False),
+    reranker_model=os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
+    dense_overfetch_multiplier=_get_int("DENSE_OVERFETCH_MULTIPLIER", 3),
+    bm25_enabled=_get_bool("BM25_ENABLED", True),
+    linter_enabled=_get_bool("LINTER_ENABLED", True),
 )
