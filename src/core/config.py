@@ -33,6 +33,14 @@ def _get_float(name: str, default: float) -> float:
         return default
 
 
+def _get_csv(name: str, default: list[str]) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    items = [item.strip() for item in raw.split(",")]
+    return [item for item in items if item]
+
+
 @dataclass(frozen=True)
 class Settings:
     github_webhook_secret: str | None
@@ -57,6 +65,10 @@ class Settings:
     web_search_max_results: int
     read_url_max_chars: int
 
+    max_critic_iterations: int
+
+    enabled_agents: list[str]
+
     log_level: str
 
 
@@ -79,5 +91,7 @@ settings = Settings(
     milvus_port=_get_int("MILVUS_PORT", 19530),
     web_search_max_results=_get_int("WEB_SEARCH_MAX_RESULTS", 5),
     read_url_max_chars=_get_int("READ_URL_MAX_CHARS", 5000),
+    max_critic_iterations=_get_int("MAX_CRITIC_ITERATIONS", 3),
+    enabled_agents=_get_csv("ENABLED_AGENTS", ["security", "style"]),
     log_level=os.getenv("LOG_LEVEL", "INFO"),
 )

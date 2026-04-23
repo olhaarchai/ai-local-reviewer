@@ -19,8 +19,6 @@ from src.review.state import ReviewerState
 
 builder = StateGraph(ReviewerState)
 
-MAX_CRITIC_ITERATIONS = 3
-
 logger = logging.getLogger(__name__)
 
 
@@ -33,7 +31,7 @@ def _state_get(state: ReviewerState | dict, key: str, default=None):
 def _route_after_critic(state: ReviewerState | dict) -> str:
     is_valid = bool(_state_get(state, "is_valid", False))
     iterations = int(_state_get(state, "iterations", 0) or 0)
-    if is_valid or iterations >= MAX_CRITIC_ITERATIONS:
+    if is_valid or iterations >= settings.max_critic_iterations:
         return "summarizer"
     return "retry"
 
@@ -69,30 +67,42 @@ async def enter_checkpointer(exit_stack: AsyncExitStack):
 
 builder.add_node("filter", filter_node)
 builder.add_node("retriever", retriever_node)
-builder.add_node("security_analyst", security_analyst_node)
-builder.add_node("style_analyst", style_analyst_node)
-builder.add_node("critic", critic_node)
-builder.add_node("retry", retry_node)
 builder.add_node("summarizer", summary_node)
+
+agent_map = {
+    "security": ("security_analyst", security_analyst_node),
+    "style": ("style_analyst", style_analyst_node),
+}
+enabled_agents = [a for a in settings.enabled_agents if a in agent_map]
 
 builder.add_edge(START, "filter")
 builder.add_edge("filter", "retriever")
-builder.add_edge("retriever", "security_analyst")
-builder.add_edge("retriever", "style_analyst")
 
-builder.add_edge("security_analyst", "critic")
-builder.add_edge("style_analyst", "critic")
+if enabled_agents:
+    builder.add_node("critic", critic_node)
+    builder.add_node("retry", retry_node)
 
-builder.add_conditional_edges(
-    "critic",
-    _route_after_critic,
-    {
-        "retry": "retry",
-        "summarizer": "summarizer",
-    },
-)
-builder.add_edge("retry", "security_analyst")
-builder.add_edge("retry", "style_analyst")
+    for key in enabled_agents:
+        node_name, node_fn = agent_map[key]
+        builder.add_node(node_name, node_fn)
+        builder.add_edge("retriever", node_name)
+        builder.add_edge(node_name, "critic")
+
+    builder.add_conditional_edges(
+        "critic",
+        _route_after_critic,
+        {
+            "retry": "retry",
+            "summarizer": "summarizer",
+        },
+    )
+    for key in enabled_agents:
+        node_name, _ = agent_map[key]
+        builder.add_edge("retry", node_name)
+else:
+    logger.warning("[graph] No enabled agents; skipping analysis")
+    builder.add_edge("retriever", "summarizer")
+
 builder.add_edge("summarizer", END)
 
 
