@@ -19,6 +19,14 @@ class StyleComment(BaseModel):
     body: str
 
 
+class SecurityReviewResult(BaseModel):
+    comments: list[SecurityComment] = Field(default_factory=list)
+
+
+class StyleReviewResult(BaseModel):
+    comments: list[StyleComment] = Field(default_factory=list)
+
+
 ReviewComment = Union[SecurityComment, StyleComment, dict[str, Any]]
 
 
@@ -37,3 +45,6 @@ class ReviewerState(BaseModel):
     route: Optional[str] = None
     critic_issues: list[dict[str, Any]] = Field(default_factory=list)
     summary_override: Optional[str] = None
+    timings: Annotated[list[dict[str, float]], operator.add] = Field(
+        default_factory=list
+    )

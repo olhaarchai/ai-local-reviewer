@@ -96,12 +96,18 @@ class GitHubClient:
                     "[github_client] 422 on inline comments (%s), falling back to summary-only",
                     response.json().get("errors"),
                 )
-                # Append issues list to body so nothing is lost
-                issues_md = "\n".join(
-                    f"- `{c['path']}:{c['line']}` — {c['body']}"
-                    for c in github_comments  # body already formatted with severity/owasp
-                )
-                fallback_body = f"{body}\n\n---\n**Findings (inline comments unavailable):**\n{issues_md}"
+                # Append only missing findings to avoid duplicates.
+                missing_lines = []
+                for c in github_comments:
+                    marker = f"{c['path']}:{c['line']}"
+                    if marker in body:
+                        continue
+                    missing_lines.append(f"- `{marker}` — {c['body']}")
+                if missing_lines:
+                    issues_md = "\n".join(missing_lines)
+                    fallback_body = f"{body}\n\n---\n**Findings (inline comments unavailable):**\n{issues_md}"
+                else:
+                    fallback_body = body
                 response = await client.post(
                     url,
                     json={

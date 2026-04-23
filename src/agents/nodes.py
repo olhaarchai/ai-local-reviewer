@@ -2,15 +2,18 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_ollama import ChatOllama
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Overwrite
 
+from src.agents.security_agent import build_security_agent
 from src.agents.state import ReviewerState
+from src.agents.style_agent import build_style_agent
+from src.agents.summarizer_agent import build_summarizer_agent
 
 load_dotenv()
 
@@ -28,48 +31,12 @@ def _load_prompt(filename: str) -> str:
         return ""
 
 
-llm_security = ChatOllama(
-    model=os.getenv("OLLAMA_MODEL_SECURITY"), temperature=0, format="json"
-)
-llm_style = ChatOllama(
-    model=os.getenv("OLLAMA_MODEL_STYLE"), temperature=0.2, format="json"
-)
-llm_fast = ChatOllama(model=os.getenv("OLLAMA_MODEL_FAST"), temperature=0.1)
-
-_LINE_RULE = (
-    'CRITICAL: Only comment on lines that start with "+" in the diff. '
-    "Use the hunk header (@@ -L,l +L,l @@) to calculate the correct absolute line number. "
-    "If you are unsure of the exact line number, skip the comment — do NOT guess."
-)
-
-_RULE_ID_INSTRUCTION = (
-    "If a finding matches an ADDITIONAL PROJECT RULE, "
-    "start the 'body' field with the Rule ID in brackets, "
-    "e.g., '[TS001] Use unknown instead of any'."
-)
-
-_SECURITY_FORMAT = (
-    "Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\n"
-    'Format: [{"path": "file.ts", "line": 10, "owasp_id": "A03:2021", '
-    '"severity": "High", "body": "description"}]\n'
-    "Severity values: Critical, High, Medium, Low.\n"
-    + _LINE_RULE
-    + "\n"
-    + _RULE_ID_INSTRUCTION
-)
-
-_STYLE_FORMAT = (
-    "Output ONLY a raw JSON array. No markdown, no explanation, no code blocks.\n"
-    'Format: [{"path": "file.ts", "line": 10, "body": "description"}]\n'
-    + _LINE_RULE
-    + "\n"
-    + _RULE_ID_INSTRUCTION
-)
-
 _SECURITY_PERSONA = _load_prompt("security-persona.md")
 _STYLE_PERSONA = _load_prompt("style-persona.md")
 _SUMMARIZER_PERSONA = _load_prompt("summarizer-persona.md")
 _OWASP_FOCUS = _load_prompt("owasp-focus.md")
+_SECURITY_FORMAT = _load_prompt("security-format.md")
+_STYLE_FORMAT = _load_prompt("style-format.md")
 
 _NOISE_FILE_PATTERNS = (
     "package-lock.json",
@@ -108,12 +75,59 @@ def filter_diff(raw_diff: str) -> str:
 def _parse_json_response(content: str, node: str) -> list:
     clean = content.replace("```json", "").replace("```", "").strip()
     parsed = json.loads(clean)
-    if isinstance(parsed, dict):
+    if isinstance(parsed, dict) and "comments" in parsed:
+        parsed = parsed.get("comments", [])
+    elif isinstance(parsed, dict):
         parsed = [parsed]
     if not isinstance(parsed, list):
         raise ValueError(f"Unexpected JSON type: {type(parsed)}")
     logger.info("[%s] Parsed %d structured comments", node, len(parsed))
     return parsed
+
+
+def _extract_agent_result(result: Any, node: str) -> tuple[list, AIMessage | None, str]:
+    if not isinstance(result, dict):
+        return ([], None, "")
+
+    messages = result.get("messages") or []
+    last_message = None
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            last_message = msg
+            break
+    if last_message is None:
+        return ([], None, "")
+
+    raw_content = getattr(last_message, "content", "")
+    structured = result.get("structured_response")
+    if structured is not None:
+        if isinstance(structured, dict):
+            comments = structured.get("comments", [])
+            return (comments or [], last_message, raw_content)
+        if hasattr(structured, "comments"):
+            return (
+                list(getattr(structured, "comments") or []),
+                last_message,
+                raw_content,
+            )
+    if raw_content:
+        try:
+            comments = _parse_json_response(raw_content, node)
+            return (comments, last_message, raw_content)
+        except Exception as exc:
+            logger.error("[%s] JSON parse failed: %s", node, exc)
+    return ([], last_message, raw_content)
+
+
+def _extract_last_ai_text(result: Any) -> str:
+    if not isinstance(result, dict):
+        return ""
+    for msg in reversed(result.get("messages", [])):
+        if isinstance(msg, AIMessage):
+            text = getattr(msg, "content", "")
+            if isinstance(text, str) and text.strip():
+                return text
+    return ""
 
 
 def _state_get(state: ReviewerState | dict, key: str, default: Any = None) -> Any:
@@ -244,6 +258,7 @@ def filter_node(state: ReviewerState) -> dict:
         "comments": Overwrite(value=[]),
         "messages": Overwrite(value=[]),
         "raw_responses": Overwrite(value=[]),
+        "timings": Overwrite(value=[]),
         "critic_issues": [],
         "critic_feedback": None,
         "iterations": 0,
@@ -255,6 +270,7 @@ def filter_node(state: ReviewerState) -> dict:
 async def security_analyst_node(state: ReviewerState):
     model_name = os.getenv("OLLAMA_MODEL_SECURITY")
     logger.info("[security_analyst] Starting OWASP audit with model=%s", model_name)
+    started_at = time.perf_counter()
 
     system_content = _SECURITY_PERSONA + _OWASP_FOCUS + "\n" + _SECURITY_FORMAT
     guidelines = _state_get(state, "guidelines", [])
@@ -271,31 +287,31 @@ async def security_analyst_node(state: ReviewerState):
         )
 
     diff = _state_get(state, "diff", "")
-    response = await llm_security.ainvoke(
-        [
-            SystemMessage(content=system_content),
-            HumanMessage(content=f"DIFF:\n{diff}"),
-        ]
+    agent = build_security_agent(system_content)
+    result = await agent.ainvoke({"messages": [HumanMessage(content=f"DIFF:\n{diff}")]})
+
+    comments, last_message, raw_response = _extract_agent_result(
+        result, "security_analyst"
     )
-
-    logger.debug("[security_analyst] Raw response:\n%s", response.content)
-    raw_response = response.content
-
-    try:
-        comments = _parse_json_response(response.content, "security_analyst")
-        return {
-            "messages": [response],
-            "comments": comments,
-            "raw_responses": [raw_response],
-        }
-    except Exception as e:
-        logger.error("[security_analyst] JSON parse failed: %s", e)
-        return {"messages": [response], "raw_responses": [raw_response]}
+    duration = time.perf_counter() - started_at
+    logger.info("[security_analyst] Completed in %.2fs", duration)
+    if last_message:
+        logger.debug("[security_analyst] Raw response:\n%s", raw_response)
+    payload: dict[str, Any] = {}
+    if last_message:
+        payload["messages"] = [last_message]
+    if raw_response:
+        payload["raw_responses"] = [raw_response]
+    if comments:
+        payload["comments"] = comments
+    payload["timings"] = [{"security_analyst": duration}]
+    return payload
 
 
 async def style_analyst_node(state: ReviewerState):
     model_name = os.getenv("OLLAMA_MODEL_STYLE")
     logger.info("[style_analyst] Starting with model=%s", model_name)
+    started_at = time.perf_counter()
 
     system_content = _STYLE_PERSONA + _STYLE_FORMAT
     guidelines = _state_get(state, "guidelines", [])
@@ -312,26 +328,25 @@ async def style_analyst_node(state: ReviewerState):
         )
 
     diff = _state_get(state, "diff", "")
-    response = await llm_style.ainvoke(
-        [
-            SystemMessage(content=system_content),
-            HumanMessage(content=f"DIFF:\n{diff}"),
-        ]
+    agent = build_style_agent(system_content)
+    result = await agent.ainvoke({"messages": [HumanMessage(content=f"DIFF:\n{diff}")]})
+
+    comments, last_message, raw_response = _extract_agent_result(
+        result, "style_analyst"
     )
-
-    logger.debug("[style_analyst] Raw response:\n%s", response.content)
-    raw_response = response.content
-
-    try:
-        comments = _parse_json_response(response.content, "style_analyst")
-        return {
-            "messages": [response],
-            "comments": comments,
-            "raw_responses": [raw_response],
-        }
-    except Exception as e:
-        logger.error("[style_analyst] JSON parse failed: %s", e)
-        return {"messages": [response], "raw_responses": [raw_response]}
+    duration = time.perf_counter() - started_at
+    logger.info("[style_analyst] Completed in %.2fs", duration)
+    if last_message:
+        logger.debug("[style_analyst] Raw response:\n%s", raw_response)
+    payload: dict[str, Any] = {}
+    if last_message:
+        payload["messages"] = [last_message]
+    if raw_response:
+        payload["raw_responses"] = [raw_response]
+    if comments:
+        payload["comments"] = comments
+    payload["timings"] = [{"style_analyst": duration}]
+    return payload
 
 
 def critic_node(state: ReviewerState) -> dict:
@@ -443,17 +458,33 @@ def retry_node(state: ReviewerState) -> dict:
 
 
 async def summary_node(state: ReviewerState):
-    model_name = os.getenv("OLLAMA_MODEL_FAST")
+    use_llm = os.getenv("SUMMARIZER_USE_LLM", "false").lower() in {"1", "true", "yes"}
     comments = _state_get(state, "comments", [])
     summary_override = _state_get(state, "summary_override", None)
     logger.info(
-        "[summarizer] Starting with model=%s, total structured comments=%d",
-        model_name,
+        "[summarizer] Starting (llm=%s), total structured comments=%d",
+        use_llm,
         len(comments),
     )
     if summary_override:
         logger.info("[summarizer] Using human-provided summary override")
         return {"messages": [AIMessage(content=summary_override)]}
+
+    if use_llm:
+        agent = build_summarizer_agent(_SUMMARIZER_PERSONA)
+        payload = json.dumps(comments, ensure_ascii=False)
+        started_at = time.perf_counter()
+        result = await agent.ainvoke(
+            {"messages": [HumanMessage(content=f"COMMENTS:\n{payload}")]}
+        )
+        duration = time.perf_counter() - started_at
+        summary_text = _extract_last_ai_text(result)
+        if summary_text:
+            logger.info("[summarizer] Using LLM summary")
+            return {
+                "messages": [AIMessage(content=summary_text)],
+                "timings": [{"summarizer": duration}],
+            }
 
     summary = _build_summary_from_comments(comments)
     if summary:

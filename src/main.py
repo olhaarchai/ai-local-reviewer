@@ -116,6 +116,24 @@ def _build_summary_from_comments(comments: list[dict]) -> str | None:
     ).strip()
 
 
+def _format_timings(timings: list[dict[str, float]] | None) -> str | None:
+    if not timings:
+        return None
+    totals: dict[str, float] = {}
+    for entry in timings:
+        if not isinstance(entry, dict):
+            continue
+        for name, seconds in entry.items():
+            try:
+                totals[name] = totals.get(name, 0.0) + float(seconds)
+            except (TypeError, ValueError):
+                continue
+    if not totals:
+        return None
+    parts = [f"{name}={totals[name]:.2f}s" for name in sorted(totals)]
+    return ", ".join(parts)
+
+
 async def verify_signature(request: Request):
     signature = request.headers.get("X-Hub-Signature-256")
     if not signature:
@@ -212,6 +230,9 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                     if fallback:
                         ai_summary = fallback
 
+                timings_text = _format_timings(final_output.get("timings"))
+                if timings_text:
+                    logger.info("── timings ── %s", timings_text)
                 logger.info("── review complete  issues=%d ──", len(ai_comments))
                 for c in ai_comments:
                     owasp = f" [{c.get('owasp_id')}]" if c.get("owasp_id") else ""
