@@ -149,11 +149,15 @@ _OBVIOUS_PATTERNS = (
 )
 
 
-def _extract_rule_ids(guidelines: list[str]) -> set[str]:
+def _extract_rule_ids(guidelines: list) -> set[str]:
     rule_ids: set[str] = set()
-    for guideline in guidelines:
-        for match in _GUIDELINE_RULE_PATTERN.finditer(guideline or ""):
-            rule_ids.add(match.group("rule"))
+    for g in guidelines:
+        if hasattr(g, "id"):
+            if g.id != "UNKNOWN":
+                rule_ids.add(g.id)
+        else:
+            for match in _GUIDELINE_RULE_PATTERN.finditer(str(g) or ""):
+                rule_ids.add(match.group("rule"))
     return rule_ids
 
 
@@ -276,7 +280,9 @@ async def security_analyst_node(state: ReviewerState):
         system_content = f"PR CONTEXT:\n{stack_context}\n\n" + system_content
     guidelines = _state_get(state, "guidelines", [])
     if guidelines:
-        rules_text = "\n".join(f"- {r}" for r in guidelines)
+        rules_text = "\n".join(
+            f"- {g.text if hasattr(g, 'text') else g}" for g in guidelines
+        )
         system_content += (
             f"\n\nADDITIONAL PROJECT RULES (enforce these too):\n{rules_text}"
         )
@@ -325,7 +331,9 @@ async def style_analyst_node(state: ReviewerState):
         system_content = f"PR CONTEXT:\n{stack_context}\n\n" + system_content
     guidelines = _state_get(state, "guidelines", [])
     if guidelines:
-        rules_text = "\n".join(f"- {r}" for r in guidelines)
+        rules_text = "\n".join(
+            f"- {g.text if hasattr(g, 'text') else g}" for g in guidelines
+        )
         system_content += (
             f"\n\nADDITIONAL PROJECT RULES (enforce these too):\n{rules_text}"
         )

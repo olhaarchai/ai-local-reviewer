@@ -16,7 +16,7 @@ _EXT_TO_CATEGORY: dict[str, str] = {
     "tf": "terraform",
     "sh": "shell-scripts",
 }
-_ALWAYS_INCLUDE = ["security-owasp", "api-design"]
+_ALWAYS_INCLUDE = ["security-owasp", "api-design", "common"]
 _COLLECTION = "code_review_rules"
 
 # Path-pattern rules for YAML files — checked in order, first match wins.
@@ -104,7 +104,9 @@ async def retriever_node(state: dict | Any) -> dict:
 
         query_embedding = _embed_model.encode([search_query]).tolist()
 
-        all_guidelines: list[str] = []
+        from src.review.state import Guideline
+
+        all_guidelines: list[Guideline] = []
         for cat in detected_stack:
             cat_results = collection.search(
                 data=query_embedding,
@@ -115,9 +117,9 @@ async def retriever_node(state: dict | Any) -> dict:
                 output_fields=["text"],
             )
             hits = [
-                hit.entity.get("text")
+                Guideline.from_text(text, cat)
                 for hit in cat_results[0]
-                if hit.entity.get("text")
+                if (text := hit.entity.get("text"))
                 and hit.distance <= settings.milvus_score_threshold
             ]
             logger.info("[RAG] Category '%s': found %d rules", cat, len(hits))

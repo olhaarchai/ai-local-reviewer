@@ -181,7 +181,7 @@ index 000..111 100644
 
     def test_empty_diff_only_always_include(self):
         stack = detect_stack("")
-        assert stack == ["security-owasp", "api-design"]
+        assert set(stack) == {"security-owasp", "api-design", "common"}
 
 
 # ---------------------------------------------------------------------------

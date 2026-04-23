@@ -1,0 +1,7 @@
+- [COM001] Remove all debug print statements and temporary logging before merging
+- [COM002] Do not leave commented-out code in the PR; delete unused code entirely
+- [COM003] Every TODO comment must reference a ticket or issue number, e.g. # TODO(PROJ-123)
+- [COM004] Function and variable names must be descriptive; single-letter names are only acceptable as loop counters
+- [COM005] Do not leave dead code (unreachable branches, unused imports, unused variables) in the diff
+- [COM006] Avoid magic numbers and magic strings; extract them as named constants
+- [COM007] Keep functions focused on a single responsibility; if a function does more than one thing, split it
