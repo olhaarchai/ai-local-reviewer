@@ -7,6 +7,9 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
+_WEB_SEARCH_TIMEOUT_SEC = 15.0
+_READ_URL_TIMEOUT_SEC = 20.0
+
 
 @tool
 async def web_search(query: str) -> str:
@@ -17,8 +20,11 @@ async def web_search(query: str) -> str:
     logger.info("[web_search] query=%r max_results=%d", query, max_results)
     try:
         loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(
-            None, lambda: DDGS().text(query, max_results=max_results)
+        results = await asyncio.wait_for(
+            loop.run_in_executor(
+                None, lambda: DDGS().text(query, max_results=max_results)
+            ),
+            timeout=_WEB_SEARCH_TIMEOUT_SEC,
         )
         if not results:
             return "No results found."
@@ -29,6 +35,9 @@ async def web_search(query: str) -> str:
             lines.append(f"   Snippet: {result.get('body', '')}")
             lines.append("")
         return "\n".join(lines)
+    except asyncio.TimeoutError:
+        logger.warning("[web_search] timed out after %.0fs", _WEB_SEARCH_TIMEOUT_SEC)
+        return "Search timed out."
     except Exception as exc:
         logger.warning("[web_search] failed: %s", exc)
         return f"Search error: {exc}"
@@ -43,15 +52,24 @@ async def read_url(url: str) -> str:
     logger.info("[read_url] url=%s max_chars=%d", url, max_chars)
     try:
         loop = asyncio.get_event_loop()
-        downloaded = await loop.run_in_executor(
-            None, lambda: trafilatura.fetch_url(url)
+        downloaded = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: trafilatura.fetch_url(url)),
+            timeout=_READ_URL_TIMEOUT_SEC,
         )
         if not downloaded:
             return f"Error: Could not fetch URL: {url}"
-        text = await loop.run_in_executor(None, lambda: trafilatura.extract(downloaded))
+        text = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: trafilatura.extract(downloaded)),
+            timeout=_READ_URL_TIMEOUT_SEC,
+        )
         if not text:
             return f"Error: Could not extract text from: {url}"
         return text[:max_chars]
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[read_url] timed out after %.0fs on %s", _READ_URL_TIMEOUT_SEC, url
+        )
+        return f"Error: Timed out reading URL {url}."
     except Exception as exc:
         logger.warning("[read_url] failed: %s", exc)
         return f"Error reading URL {url}: {exc}"

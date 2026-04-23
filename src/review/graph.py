@@ -10,6 +10,7 @@ from src.integrations.retriever import retriever_node
 from src.review.nodes import (
     critic_node,
     filter_node,
+    hitl_gate_node,
     linter_node,
     retry_node,
     security_analyst_node,
@@ -33,8 +34,12 @@ def _route_after_critic(state: ReviewerState | dict) -> str:
     is_valid = bool(_state_get(state, "is_valid", False))
     iterations = int(_state_get(state, "iterations", 0) or 0)
     if is_valid or iterations >= settings.max_critic_iterations:
-        return "summarizer"
+        return "hitl_gate"
     return "retry"
+
+
+def _route_after_hitl(state: ReviewerState | dict) -> str:
+    return "retry" if _state_get(state, "route") == "retry" else "summarizer"
 
 
 async def enter_checkpointer(exit_stack: AsyncExitStack):
@@ -85,6 +90,7 @@ if enabled_agents:
     builder.add_node("linter", linter_node)
     builder.add_node("critic", critic_node)
     builder.add_node("retry", retry_node)
+    builder.add_node("hitl_gate", hitl_gate_node)
 
     builder.add_edge("retriever", "linter")
 
@@ -97,6 +103,14 @@ if enabled_agents:
     builder.add_conditional_edges(
         "critic",
         _route_after_critic,
+        {
+            "retry": "retry",
+            "hitl_gate": "hitl_gate",
+        },
+    )
+    builder.add_conditional_edges(
+        "hitl_gate",
+        _route_after_hitl,
         {
             "retry": "retry",
             "summarizer": "summarizer",

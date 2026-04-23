@@ -79,6 +79,16 @@ class Settings:
     dense_overfetch_multiplier: int
     bm25_enabled: bool
     linter_enabled: bool
+    linter_max_findings_per_file: int
+    linter_max_findings_total: int
+    hitl_auto_approve: bool
+    output_dir: str
+    ollama_num_ctx_security: int
+    ollama_num_ctx_style: int
+    ollama_num_ctx_fast: int
+    ollama_keep_alive: str
+    ollama_num_predict_analyst: int
+    ollama_num_predict_fast: int
 
 
 settings = Settings(
@@ -111,4 +121,22 @@ settings = Settings(
     dense_overfetch_multiplier=_get_int("DENSE_OVERFETCH_MULTIPLIER", 3),
     bm25_enabled=_get_bool("BM25_ENABLED", True),
     linter_enabled=_get_bool("LINTER_ENABLED", True),
+    linter_max_findings_per_file=_get_int("LINTER_MAX_FINDINGS_PER_FILE", 3),
+    linter_max_findings_total=_get_int("LINTER_MAX_FINDINGS_TOTAL", 10),
+    hitl_auto_approve=_get_bool("HITL_AUTO_APPROVE", False),
+    output_dir=os.getenv("OUTPUT_DIR", "output"),
+    # Ollama's default num_ctx is 2048 — far below our typical diff + rules
+    # + system prompt (~10k tokens). Raise per-model to avoid silent input
+    # truncation, which causes hallucinations and stalls on 7B models.
+    ollama_num_ctx_security=_get_int("OLLAMA_NUM_CTX_SECURITY", 16384),
+    ollama_num_ctx_style=_get_int("OLLAMA_NUM_CTX_STYLE", 8192),
+    ollama_num_ctx_fast=_get_int("OLLAMA_NUM_CTX_FAST", 4096),
+    # How long Ollama keeps the model loaded after a request. Stops cold-
+    # start penalty between PRs. Accepts "30m", "1h", "24h", "-1" (forever).
+    ollama_keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+    # Hard cap on generated tokens. Without this, Ollama's default -1
+    # lets the model loop into thousands of tokens of JSON garbage on
+    # long-context format="json" runs — a well-known qwen2.5 failure mode.
+    ollama_num_predict_analyst=_get_int("OLLAMA_NUM_PREDICT_ANALYST", 2048),
+    ollama_num_predict_fast=_get_int("OLLAMA_NUM_PREDICT_FAST", 1024),
 )

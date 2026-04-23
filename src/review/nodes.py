@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.types import Overwrite
+from langgraph.types import Overwrite, interrupt
 
 from src.integrations.retriever import (
     _ALWAYS_INCLUDE,
@@ -632,6 +632,9 @@ def linter_node(state: ReviewerState) -> dict:
     pr_files = extract_pr_files(diff)
     findings_out: list[str] = []
     checked = 0
+    per_file_cap = settings.linter_max_findings_per_file
+    total_cap = settings.linter_max_findings_total
+    raw_total = 0
 
     for path in pr_files:
         if not path.endswith(".py"):
@@ -641,18 +644,35 @@ def linter_node(state: ReviewerState) -> dict:
             continue
         checked += 1
         raw = run_ruff_on_file(path, content)
+        raw_total += len(raw)
+        # Dedupe by (code) within a file — multiple E501 on the same file
+        # don't help the LLM; one representative is plenty.
+        seen_codes: set[str] = set()
+        file_count = 0
         for finding in raw:
-            # ruff JSON: {code, message, location:{row,column}, filename, ...}
+            if file_count >= per_file_cap:
+                break
             code = finding.get("code") or "ruff"
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
             msg = finding.get("message") or ""
             loc = finding.get("location") or {}
             row = loc.get("row") or 0
             findings_out.append(f"{path}:{row} - [ruff:{code}] {msg}")
+            file_count += 1
+            if len(findings_out) >= total_cap:
+                break
+        if len(findings_out) >= total_cap:
+            break
 
     logger.info(
-        "[linter] py_files_checked=%d findings=%d",
+        "[linter] py_files_checked=%d raw_findings=%d kept=%d (cap=%d/file, %d/total)",
         checked,
+        raw_total,
         len(findings_out),
+        per_file_cap,
+        total_cap,
     )
     return {"lint_findings": findings_out}
 
@@ -665,7 +685,70 @@ def retry_node(state: ReviewerState) -> dict:
         "messages": Overwrite(value=[]),
         "raw_responses": Overwrite(value=[]),
         "critic_issues": [],
+        "route": None,
     }
+
+
+def _comment_preview(comment: Any) -> dict:
+    if isinstance(comment, dict):
+        return comment
+    if hasattr(comment, "model_dump"):
+        return comment.model_dump()
+    if hasattr(comment, "__dict__"):
+        return dict(comment.__dict__)
+    return {"body": str(comment)}
+
+
+def hitl_gate_node(state: ReviewerState) -> dict:
+    """Pause before summarizer for human approve/retry.
+
+    Auto-approve short-circuits the interrupt(). On retry, we reset comments/
+    messages/raw_responses and route back to the retry_node via `state.route`.
+    """
+    from src.core.config import settings
+
+    if settings.hitl_auto_approve:
+        logger.info("[hitl_gate] auto-approve enabled — passing through")
+        return {"route": "approve"}
+
+    comments = _state_get(state, "comments", []) or []
+    iterations = _state_get(state, "iterations", 0)
+    lint_findings = _state_get(state, "lint_findings", []) or []
+    critic_issues = _state_get(state, "critic_issues", []) or []
+
+    payload = {
+        "comments": [_comment_preview(c) for c in comments],
+        "iterations": iterations,
+        "lint_findings_count": len(lint_findings),
+        "rejected_count": len(critic_issues),
+    }
+    logger.info(
+        "[hitl_gate] pausing for user decision (comments=%d, iter=%d)",
+        len(comments),
+        iterations,
+    )
+    decision = interrupt(payload)
+
+    action = (decision or {}).get("action", "approve")
+    if action == "retry":
+        feedback = (decision or {}).get("feedback") or None
+        logger.info(
+            "[hitl_gate] user requested retry%s",
+            " with guidance" if feedback else "",
+        )
+        return {
+            "comments": Overwrite(value=[]),
+            "messages": Overwrite(value=[]),
+            "raw_responses": Overwrite(value=[]),
+            "critic_issues": [],
+            "critic_feedback": feedback,
+            "is_valid": False,
+            "iterations": 0,
+            "route": "retry",
+        }
+
+    logger.info("[hitl_gate] user approved")
+    return {"route": "approve"}
 
 
 async def summary_node(state: ReviewerState):

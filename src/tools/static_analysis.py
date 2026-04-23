@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 _RUFF_TIMEOUT_SEC = 10
 _ruff_missing_logged = False
 
+# Ruff rule subset that stays correct on diff-fragment content (no full-file
+# context). Excludes F401/F811/F821 because those rely on seeing imports and
+# top-level decls that a +line reconstruction cannot provide. Keeps the real
+# code-smell signal: long lines, bare excepts, mutable defaults, unused vars
+# inside a function body, redundant comparisons.
+_RUFF_FRAGMENT_SAFE_SELECT = (
+    "E501,E701,E702,E703,E711,E712,E713,E714,E721,E722,E731,E741,"
+    "F541,F601,F602,F631,F632,F701,F702,F704,F841,"
+    "W291,W292,W293,W605,"
+    "B006,B007,B015,B018,B020"
+)
+
 
 def _ruff_available() -> bool:
     global _ruff_missing_logged
@@ -51,7 +63,15 @@ def run_ruff_on_file(path: str, content: str) -> list[dict]:
             f.write(content)
             tmp_path = Path(f.name)
         result = subprocess.run(
-            ["ruff", "check", "--output-format=json", str(tmp_path)],
+            [
+                "ruff",
+                "check",
+                "--output-format=json",
+                "--no-fix",
+                f"--select={_RUFF_FRAGMENT_SAFE_SELECT}",
+                "--isolated",
+                str(tmp_path),
+            ],
             capture_output=True,
             text=True,
             timeout=_RUFF_TIMEOUT_SEC,

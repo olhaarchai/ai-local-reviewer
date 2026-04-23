@@ -1,4 +1,3 @@
-
 from langchain.agents import create_agent
 from langchain_ollama import ChatOllama
 
@@ -17,6 +16,9 @@ def build_style_agent(system_prompt: str):
         model=model_name,
         temperature=0.2,
         format="json",
+        num_ctx=settings.ollama_num_ctx_style,
+        num_predict=settings.ollama_num_predict_analyst,
+        keep_alive=settings.ollama_keep_alive,
         async_client_kwargs={"timeout": timeout},
         client_kwargs={"timeout": timeout},
     )
