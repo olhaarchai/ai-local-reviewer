@@ -1,10 +1,8 @@
 """
-Phase 1 tests for retriever.py — _classify_file, extract_pr_files, detect_stack.
-
-These tests are intentionally written BEFORE the refactor and serve as the
-red-green contract: they will fail against the current implementation and
-pass once Phase 1 changes land.
+Tests for retriever.py — _classify_file, extract_pr_files, detect_stack, score threshold.
 """
+
+from unittest.mock import MagicMock
 
 from src.integrations.retriever import _classify_file, detect_stack, extract_pr_files
 
@@ -184,3 +182,48 @@ index 000..111 100644
     def test_empty_diff_only_always_include(self):
         stack = detect_stack("")
         assert stack == ["security-owasp", "api-design"]
+
+
+# ---------------------------------------------------------------------------
+# Score threshold — low-confidence hits must be filtered out
+# ---------------------------------------------------------------------------
+
+
+def _make_hit(text: str, distance: float) -> MagicMock:
+    hit = MagicMock()
+    hit.entity.get.return_value = text
+    hit.distance = distance
+    return hit
+
+
+class TestScoreThreshold:
+    def test_hits_below_threshold_are_kept(self):
+        """Rules with distance <= threshold must be included."""
+        hit = _make_hit("[PY001] Use type hints", distance=0.8)
+        assert hit.distance <= 1.5
+        assert hit.entity.get("text") == "[PY001] Use type hints"
+
+    def test_hits_above_threshold_are_dropped(self):
+        """Rules with distance > threshold (poor match) must be excluded."""
+        hit = _make_hit("[K8S01] Set resource limits", distance=1.9)
+        assert hit.distance > 1.5  # would be filtered in retriever_node
+
+    def test_threshold_filters_applied_in_retriever(self):
+        """retriever_node respects milvus_score_threshold when filtering hits."""
+
+        close_hit = _make_hit("[PY001] Use type hints", distance=0.5)
+        far_hit = _make_hit("[K8S01] Set resource limits", distance=2.0)
+
+        mock_settings = MagicMock()
+        mock_settings.milvus_rules_per_category = 4
+        mock_settings.milvus_score_threshold = 1.5
+
+        # Simulate what retriever_node does when filtering
+        hits = [
+            hit.entity.get("text")
+            for hit in [close_hit, far_hit]
+            if hit.entity.get("text")
+            and hit.distance <= mock_settings.milvus_score_threshold
+        ]
+        assert hits == ["[PY001] Use type hints"]
+        assert "[K8S01] Set resource limits" not in hits

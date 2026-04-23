@@ -118,6 +118,7 @@ async def retriever_node(state: dict | Any) -> dict:
                 hit.entity.get("text")
                 for hit in cat_results[0]
                 if hit.entity.get("text")
+                and hit.distance <= settings.milvus_score_threshold
             ]
             logger.info("[RAG] Category '%s': found %d rules", cat, len(hits))
             all_guidelines.extend(hits)

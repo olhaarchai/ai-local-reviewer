@@ -62,6 +62,7 @@ class Settings:
     milvus_host: str
     milvus_port: int
     milvus_rules_per_category: int
+    milvus_score_threshold: float
 
     web_search_max_results: int
     read_url_max_chars: int
@@ -92,6 +93,7 @@ settings = Settings(
     milvus_host=os.getenv("MILVUS_HOST", "localhost"),
     milvus_port=_get_int("MILVUS_PORT", 19530),
     milvus_rules_per_category=_get_int("MILVUS_RULES_PER_CATEGORY", 4),
+    milvus_score_threshold=_get_float("MILVUS_SCORE_THRESHOLD", 1.5),
     web_search_max_results=_get_int("WEB_SEARCH_MAX_RESULTS", 5),
     read_url_max_chars=_get_int("READ_URL_MAX_CHARS", 5000),
     max_critic_iterations=_get_int("MAX_CRITIC_ITERATIONS", 3),
