@@ -14,9 +14,7 @@ async def lifespan(app: FastAPI):
     app.state.checkpointer_stack = AsyncExitStack()
     await app.state.checkpointer_stack.__aenter__()
     checkpointer = await enter_checkpointer(app.state.checkpointer_stack)
-    app.state.reviewer_app = build_reviewer_app(
-        checkpointer, interrupt_before=["summarizer"]
-    )
+    app.state.reviewer_app = build_reviewer_app(checkpointer)
     try:
         yield
     finally:

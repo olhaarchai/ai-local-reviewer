@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.types import Overwrite
+from langgraph.types import Overwrite, interrupt
 
 from src.integrations.retriever import (
     _ALWAYS_INCLUDE,
@@ -685,7 +685,70 @@ def retry_node(state: ReviewerState) -> dict:
         "messages": Overwrite(value=[]),
         "raw_responses": Overwrite(value=[]),
         "critic_issues": [],
+        "route": None,
     }
+
+
+def _comment_preview(comment: Any) -> dict:
+    if isinstance(comment, dict):
+        return comment
+    if hasattr(comment, "model_dump"):
+        return comment.model_dump()
+    if hasattr(comment, "__dict__"):
+        return dict(comment.__dict__)
+    return {"body": str(comment)}
+
+
+def hitl_gate_node(state: ReviewerState) -> dict:
+    """Pause before summarizer for human approve/retry.
+
+    Auto-approve short-circuits the interrupt(). On retry, we reset comments/
+    messages/raw_responses and route back to the retry_node via `state.route`.
+    """
+    from src.core.config import settings
+
+    if settings.hitl_auto_approve:
+        logger.info("[hitl_gate] auto-approve enabled — passing through")
+        return {"route": "approve"}
+
+    comments = _state_get(state, "comments", []) or []
+    iterations = _state_get(state, "iterations", 0)
+    lint_findings = _state_get(state, "lint_findings", []) or []
+    critic_issues = _state_get(state, "critic_issues", []) or []
+
+    payload = {
+        "comments": [_comment_preview(c) for c in comments],
+        "iterations": iterations,
+        "lint_findings_count": len(lint_findings),
+        "rejected_count": len(critic_issues),
+    }
+    logger.info(
+        "[hitl_gate] pausing for user decision (comments=%d, iter=%d)",
+        len(comments),
+        iterations,
+    )
+    decision = interrupt(payload)
+
+    action = (decision or {}).get("action", "approve")
+    if action == "retry":
+        feedback = (decision or {}).get("feedback") or None
+        logger.info(
+            "[hitl_gate] user requested retry%s",
+            " with guidance" if feedback else "",
+        )
+        return {
+            "comments": Overwrite(value=[]),
+            "messages": Overwrite(value=[]),
+            "raw_responses": Overwrite(value=[]),
+            "critic_issues": [],
+            "critic_feedback": feedback,
+            "is_valid": False,
+            "iterations": 0,
+            "route": "retry",
+        }
+
+    logger.info("[hitl_gate] user approved")
+    return {"route": "approve"}
 
 
 async def summary_node(state: ReviewerState):

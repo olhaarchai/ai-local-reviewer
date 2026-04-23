@@ -6,9 +6,10 @@ import logging
 import re
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from langgraph.types import Overwrite
+from langgraph.types import Command
 
 from src.core.config import settings
+from src.core.review_log import write_review_log
 from src.core.types import Timings
 from src.integrations.github_client import GitHubClient
 
@@ -20,7 +21,14 @@ router = APIRouter()
 
 
 async def _prompt_user(prompt: str) -> str:
-    return await asyncio.to_thread(input, prompt)
+    import sys
+
+    def _read() -> str:
+        # Ensure prompt is flushed past any log buffering before blocking on stdin.
+        print(prompt, end="", flush=True, file=sys.stderr)
+        return input()
+
+    return await asyncio.to_thread(_read)
 
 
 async def _collect_multiline(prompt: str) -> str:
@@ -64,66 +72,98 @@ def _log_hitl_comments(comments: list) -> None:
         )
 
 
-async def _run_with_hitl(reviewer_app, initial_state, config) -> dict:
-    """Run the graph with an approve/retry HITL gate before the summarizer.
+async def _read_hitl_decision(interrupt_value: dict) -> dict:
+    """Show the interrupt payload and ask the user for approve/retry.
 
-    LangGraph 1.x pauses at compile-time `interrupt_before` without raising —
-    `ainvoke` returns a partial result and `snapshot.next` points at the
-    paused node. We loop on that signal: prompt the user, resume on approve,
-    or rewind (as_node="retry") on retry.
+    Returns a resume dict: `{"action": "approve"}` or
+    `{"action": "retry", "feedback": str}`.
     """
-    result = await reviewer_app.ainvoke(initial_state, config=config)
+    if settings.hitl_auto_approve:
+        return {"action": "approve"}
+
+    comments = (
+        interrupt_value.get("comments", []) if isinstance(interrupt_value, dict) else []
+    )
+    iterations = (
+        interrupt_value.get("iterations", 0) if isinstance(interrupt_value, dict) else 0
+    )
+    logger.info(
+        "── HITL pause (comments=%d, critic iter=%d) ──",
+        len(comments),
+        iterations,
+    )
+    _log_hitl_comments(comments)
 
     while True:
-        snapshot = await reviewer_app.aget_state(config)
-        if not snapshot.next:
-            return result
-
-        values = snapshot.values if isinstance(snapshot.values, dict) else {}
-        ai_comments = values.get("comments", [])
-        logger.info(
-            "── HITL pause before %s (comments=%d) ──",
-            snapshot.next[0] if snapshot.next else "?",
-            len(ai_comments),
-        )
-        _log_hitl_comments(ai_comments)
-
-        decision = (await _prompt_user("HITL — [a]pprove / [r]etry: ")).strip().lower()
-
-        if decision in {"a", "approve", "y", "yes", ""}:
-            logger.info("HITL: approved — proceeding to summarizer.")
-            result = await reviewer_app.ainvoke(
-                None, config=config, interrupt_before=[]
+        try:
+            raw = await _prompt_user("HITL — [a]pprove / [r]etry: ")
+        except EOFError:
+            logger.warning(
+                "HITL: stdin closed (non-interactive run?) — auto-approving."
             )
-            continue
+            return {"action": "approve"}
+        decision = raw.strip().lower()
+
+        if decision in {"a", "approve", "y", "yes"}:
+            logger.info("HITL: approved — proceeding to summarizer.")
+            return {"action": "approve"}
 
         if decision in {"r", "retry"}:
-            guidance = (
-                await _prompt_user(
-                    "Optional guidance for the next pass (blank to skip): "
-                )
-            ).strip()
-            await reviewer_app.aupdate_state(
-                config,
-                {
-                    "comments": Overwrite(value=[]),
-                    "messages": Overwrite(value=[]),
-                    "raw_responses": Overwrite(value=[]),
-                    "critic_issues": [],
-                    "critic_feedback": guidance or None,
-                    "is_valid": False,
-                    "iterations": 0,
-                },
-                as_node="retry",
-            )
+            try:
+                guidance = (
+                    await _prompt_user(
+                        "Optional guidance for the next pass (blank to skip): "
+                    )
+                ).strip()
+            except EOFError:
+                guidance = ""
             logger.info(
                 "HITL: retrying analysts%s",
                 " with guidance" if guidance else "",
             )
-            result = await reviewer_app.ainvoke(None, config=config)
-            continue
+            return {"action": "retry", "feedback": guidance}
 
         logger.info("HITL: unknown choice %r, expected 'a' or 'r'.", decision)
+
+
+async def _run_with_hitl(
+    reviewer_app, initial_state, config
+) -> tuple[dict, str, str | None]:
+    """Run the graph, honouring interrupt() calls inside hitl_gate_node.
+
+    Returns (final_state_values, hitl_action, hitl_feedback). `hitl_action`
+    is "approve" (possibly implicit via auto-approve) or "retry" for the
+    last decision; "feedback" is set only on retry guidance that was
+    provided. These are used by the review-log writer.
+    """
+    last_action = "approve"
+    last_feedback: str | None = None
+
+    async def _drain(stream_input) -> dict | None:
+        """Run astream until completion or interrupt; return interrupt value if any."""
+        async for chunk in reviewer_app.astream(
+            stream_input, config=config, stream_mode="updates"
+        ):
+            if "__interrupt__" in chunk:
+                interrupts = chunk["__interrupt__"]
+                if interrupts:
+                    value = getattr(interrupts[0], "value", None)
+                    if value is None and isinstance(interrupts[0], dict):
+                        value = interrupts[0].get("value")
+                    return value or {}
+        return None
+
+    interrupt_value = await _drain(initial_state)
+
+    while interrupt_value is not None:
+        decision = await _read_hitl_decision(interrupt_value)
+        last_action = decision.get("action", "approve")
+        last_feedback = decision.get("feedback") or None
+        interrupt_value = await _drain(Command(resume=decision))
+
+    snapshot = await reviewer_app.aget_state(config)
+    final_values = snapshot.values if isinstance(snapshot.values, dict) else {}
+    return final_values, last_action, last_feedback
 
 
 def _looks_like_json(text: str | None) -> bool:
@@ -269,10 +309,21 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                 thread_id = f"{repo_name}#{pr_number}"
                 reviewer_app = request.app.state.reviewer_app
                 config = {"configurable": {"thread_id": thread_id}}
-                final_output = await _run_with_hitl(reviewer_app, initial_state, config)
+                final_output, hitl_action, hitl_feedback = await _run_with_hitl(
+                    reviewer_app, initial_state, config
+                )
+
+                write_review_log(
+                    repo_name,
+                    pr_number,
+                    final_output,
+                    hitl_action,
+                    hitl_feedback=hitl_feedback,
+                )
 
                 ai_comments = _comments_as_dicts(final_output.get("comments", []))
-                ai_summary = final_output["messages"][-1].content
+                messages = final_output.get("messages") or []
+                ai_summary = getattr(messages[-1], "content", "") if messages else ""
                 if _looks_like_json(ai_summary):
                     fallback = _build_summary_from_comments(ai_comments)
                     if fallback:

@@ -81,6 +81,8 @@ class Settings:
     linter_enabled: bool
     linter_max_findings_per_file: int
     linter_max_findings_total: int
+    hitl_auto_approve: bool
+    output_dir: str
 
 
 settings = Settings(
@@ -115,4 +117,6 @@ settings = Settings(
     linter_enabled=_get_bool("LINTER_ENABLED", True),
     linter_max_findings_per_file=_get_int("LINTER_MAX_FINDINGS_PER_FILE", 3),
     linter_max_findings_total=_get_int("LINTER_MAX_FINDINGS_TOTAL", 10),
+    hitl_auto_approve=_get_bool("HITL_AUTO_APPROVE", False),
+    output_dir=os.getenv("OUTPUT_DIR", "output"),
 )
