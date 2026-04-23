@@ -79,6 +79,8 @@ class Settings:
     dense_overfetch_multiplier: int
     bm25_enabled: bool
     linter_enabled: bool
+    linter_max_findings_per_file: int
+    linter_max_findings_total: int
 
 
 settings = Settings(
@@ -111,4 +113,6 @@ settings = Settings(
     dense_overfetch_multiplier=_get_int("DENSE_OVERFETCH_MULTIPLIER", 3),
     bm25_enabled=_get_bool("BM25_ENABLED", True),
     linter_enabled=_get_bool("LINTER_ENABLED", True),
+    linter_max_findings_per_file=_get_int("LINTER_MAX_FINDINGS_PER_FILE", 3),
+    linter_max_findings_total=_get_int("LINTER_MAX_FINDINGS_TOTAL", 10),
 )
