@@ -66,6 +66,7 @@ class Settings:
     read_url_max_chars: int
 
     max_critic_iterations: int
+    agent_recursion_limit: int
 
     enabled_agents: list[str]
 
@@ -92,6 +93,7 @@ settings = Settings(
     web_search_max_results=_get_int("WEB_SEARCH_MAX_RESULTS", 5),
     read_url_max_chars=_get_int("READ_URL_MAX_CHARS", 5000),
     max_critic_iterations=_get_int("MAX_CRITIC_ITERATIONS", 3),
+    agent_recursion_limit=_get_int("AGENT_RECURSION_LIMIT", 2),
     enabled_agents=_get_csv("ENABLED_AGENTS", ["security", "style"]),
     log_level=os.getenv("LOG_LEVEL", "INFO"),
 )

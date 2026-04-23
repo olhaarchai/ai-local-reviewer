@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import trafilatura
@@ -8,14 +9,17 @@ logger = logging.getLogger(__name__)
 
 
 @tool
-def web_search(query: str) -> str:
+async def web_search(query: str) -> str:
     """Search the web using DuckDuckGo. Returns a list of results with title, URL, and snippet."""
     from src.core.config import settings
 
     max_results = settings.web_search_max_results
     logger.info("[web_search] query=%r max_results=%d", query, max_results)
     try:
-        results = DDGS().text(query, max_results=max_results)
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            None, lambda: DDGS().text(query, max_results=max_results)
+        )
         if not results:
             return "No results found."
         lines = []
@@ -31,17 +35,20 @@ def web_search(query: str) -> str:
 
 
 @tool
-def read_url(url: str) -> str:
+async def read_url(url: str) -> str:
     """Fetch and extract the main text content from a URL. Returns up to READ_URL_MAX_CHARS characters."""
     from src.core.config import settings
 
     max_chars = settings.read_url_max_chars
     logger.info("[read_url] url=%s max_chars=%d", url, max_chars)
     try:
-        downloaded = trafilatura.fetch_url(url)
+        loop = asyncio.get_event_loop()
+        downloaded = await loop.run_in_executor(
+            None, lambda: trafilatura.fetch_url(url)
+        )
         if not downloaded:
             return f"Error: Could not fetch URL: {url}"
-        text = trafilatura.extract(downloaded)
+        text = await loop.run_in_executor(None, lambda: trafilatura.extract(downloaded))
         if not text:
             return f"Error: Could not extract text from: {url}"
         return text[:max_chars]

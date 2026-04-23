@@ -13,7 +13,6 @@ from src.review.agents.style_agent import build_style_agent
 from src.review.agents.summarizer_agent import build_summarizer_agent
 from src.review.state import ReviewerState
 
-
 logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
@@ -287,7 +286,10 @@ async def security_analyst_node(state: ReviewerState):
 
     diff = _state_get(state, "diff", "")
     agent = build_security_agent(system_content)
-    result = await agent.ainvoke({"messages": [HumanMessage(content=f"DIFF:\n{diff}")]})
+    result = await agent.ainvoke(
+        {"messages": [HumanMessage(content=f"DIFF:\n{diff}")]},
+        config={"recursion_limit": settings.agent_recursion_limit},
+    )
 
     comments, last_message, raw_response = _extract_agent_result(
         result, "security_analyst"
@@ -330,7 +332,10 @@ async def style_analyst_node(state: ReviewerState):
 
     diff = _state_get(state, "diff", "")
     agent = build_style_agent(system_content)
-    result = await agent.ainvoke({"messages": [HumanMessage(content=f"DIFF:\n{diff}")]})
+    result = await agent.ainvoke(
+        {"messages": [HumanMessage(content=f"DIFF:\n{diff}")]},
+        config={"recursion_limit": settings.agent_recursion_limit},
+    )
 
     comments, last_message, raw_response = _extract_agent_result(
         result, "style_analyst"
