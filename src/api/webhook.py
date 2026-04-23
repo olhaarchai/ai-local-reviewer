@@ -7,6 +7,7 @@ import re
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from langgraph.errors import GraphInterrupt
+from langgraph.types import Overwrite
 
 from src.core.config import settings
 from src.core.types import Timings
@@ -32,6 +33,78 @@ async def _collect_multiline(prompt: str) -> str:
             break
         lines.append(line)
     return "\n".join(lines).strip()
+
+
+def _log_hitl_comments(comments: list) -> None:
+    for c in comments:
+        owasp = f" [{c.get('owasp_id')}]" if c.get("owasp_id") else ""
+        sev = f" ({c.get('severity', '').upper()})" if c.get("severity") else ""
+        logger.info(
+            "  %s%s %s:%s — %s",
+            sev,
+            owasp,
+            c.get("path"),
+            c.get("line"),
+            c.get("body"),
+        )
+
+
+async def _run_with_hitl(reviewer_app, initial_state, config) -> dict:
+    """Run the graph with an approve/retry HITL gate before the summarizer.
+
+    Loops until the user approves. On retry, state is rewound as if the
+    internal retry_node had just executed — analysts run again, critic fires,
+    and the graph re-pauses before the summarizer.
+    """
+    try:
+        return await reviewer_app.ainvoke(initial_state, config=config)
+    except GraphInterrupt:
+        pass
+
+    while True:
+        snapshot = await reviewer_app.aget_state(config)
+        values = snapshot.values if isinstance(snapshot.values, dict) else {}
+        ai_comments = values.get("comments", [])
+        logger.info(
+            "── HITL pause before summarizer (comments=%d) ──", len(ai_comments)
+        )
+        _log_hitl_comments(ai_comments)
+
+        decision = (await _prompt_user("HITL — [a]pprove / [r]etry: ")).strip().lower()
+
+        if decision in {"a", "approve", "y", "yes", ""}:
+            logger.info("HITL: approved — proceeding to summarizer.")
+            return await reviewer_app.ainvoke(None, config=config, interrupt_before=[])
+
+        if decision in {"r", "retry"}:
+            guidance = (
+                await _prompt_user(
+                    "Optional guidance for the next pass (blank to skip): "
+                )
+            ).strip()
+            await reviewer_app.aupdate_state(
+                config,
+                {
+                    "comments": Overwrite(value=[]),
+                    "messages": Overwrite(value=[]),
+                    "raw_responses": Overwrite(value=[]),
+                    "critic_issues": [],
+                    "critic_feedback": guidance or None,
+                    "is_valid": False,
+                    "iterations": 0,
+                },
+                as_node="retry",
+            )
+            logger.info(
+                "HITL: retrying analysts%s",
+                " with guidance" if guidance else "",
+            )
+            try:
+                return await reviewer_app.ainvoke(None, config=config)
+            except GraphInterrupt:
+                continue
+
+        logger.info("HITL: unknown choice %r, expected 'a' or 'r'.", decision)
 
 
 def _looks_like_json(text: str | None) -> bool:
@@ -177,55 +250,7 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                 thread_id = f"{repo_name}#{pr_number}"
                 reviewer_app = request.app.state.reviewer_app
                 config = {"configurable": {"thread_id": thread_id}}
-                try:
-                    final_output = await reviewer_app.ainvoke(
-                        initial_state, config=config
-                    )
-                except GraphInterrupt:
-                    snapshot = await reviewer_app.aget_state(config)
-                    values = (
-                        snapshot.values if isinstance(snapshot.values, dict) else {}
-                    )
-                    ai_comments = values.get("comments", [])
-                    logger.info("── HITL pause before summarizer ──")
-                    for c in ai_comments:
-                        owasp = f" [{c.get('owasp_id')}]" if c.get("owasp_id") else ""
-                        sev = (
-                            f" ({c.get('severity', '').upper()})"
-                            if c.get("severity")
-                            else ""
-                        )
-                        logger.info(
-                            "  %s%s %s:%s — %s",
-                            sev,
-                            owasp,
-                            c.get("path"),
-                            c.get("line"),
-                            c.get("body"),
-                        )
-                    decision = (
-                        (
-                            await _prompt_user(
-                                "Approve review? [y]es / [e]dit summary / [n]o: "
-                            )
-                        )
-                        .strip()
-                        .lower()
-                    )
-                    if decision in {"n", "no"}:
-                        logger.info("HITL: review aborted by user.")
-                        return {"status": "ok"}
-                    if decision in {"e", "edit"}:
-                        summary_override = await _collect_multiline(
-                            "Enter summary (finish with a single '.' line):"
-                        )
-                        if summary_override:
-                            await reviewer_app.aupdate_state(
-                                config, {"summary_override": summary_override}
-                            )
-                    final_output = await reviewer_app.ainvoke(
-                        None, config=config, interrupt_before=[]
-                    )
+                final_output = await _run_with_hitl(reviewer_app, initial_state, config)
 
                 ai_comments = final_output.get("comments", [])
                 ai_summary = final_output["messages"][-1].content
