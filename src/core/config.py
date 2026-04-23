@@ -74,6 +74,12 @@ class Settings:
 
     log_level: str
 
+    use_reranker: bool
+    reranker_model: str
+    dense_overfetch_multiplier: int
+    bm25_enabled: bool
+    linter_enabled: bool
+
 
 settings = Settings(
     github_webhook_secret=os.getenv("GITHUB_WEBHOOK_SECRET"),
@@ -100,4 +106,9 @@ settings = Settings(
     agent_recursion_limit=_get_int("AGENT_RECURSION_LIMIT", 2),
     enabled_agents=_get_csv("ENABLED_AGENTS", ["security", "style"]),
     log_level=os.getenv("LOG_LEVEL", "INFO"),
+    use_reranker=_get_bool("USE_RERANKER", False),
+    reranker_model=os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
+    dense_overfetch_multiplier=_get_int("DENSE_OVERFETCH_MULTIPLIER", 3),
+    bm25_enabled=_get_bool("BM25_ENABLED", True),
+    linter_enabled=_get_bool("LINTER_ENABLED", True),
 )
