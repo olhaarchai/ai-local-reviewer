@@ -1,0 +1,6 @@
+- [CLD01] Apply Principle of Least Privilege (POLP) to all IAM roles; grant only the permissions required for the specific task
+- [CLD02] Use a secrets manager (AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault) instead of .env files for production secrets
+- [CLD03] Tag all cloud resources with owner, environment, and cost-center for auditability and cost allocation
+- [CLD04] Enable deletion protection on stateful resources (databases, S3 buckets with critical data)
+- [CLD05] Use infrastructure as code for all resource provisioning; never create resources manually in the console
+- [CLD06] Enable audit logging (CloudTrail, GCP Audit Logs) on all accounts; retain logs for at least 90 days

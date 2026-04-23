@@ -1,0 +1,7 @@
+- [ANS01] Use Ansible modules instead of `shell` or `command` tasks to ensure idempotency; only fall back to shell when no module exists
+- [ANS02] Set `become: false` as the default; enable `become: true` only on tasks that genuinely require elevated privileges
+- [ANS03] Store all secrets in Ansible Vault; never commit plaintext passwords, tokens, or keys to the repository
+- [ANS04] Add descriptive `tags:` to every task to allow selective execution with `--tags` during deployments
+- [ANS05] Use `notify` and `handler` instead of restarting services directly in tasks; handlers run only when notified
+- [ANS06] Set `no_log: true` on tasks that handle passwords, tokens, or other sensitive values
+- [ANS07] Pin the `ansible` version in requirements files; never rely on whatever is installed on the control node

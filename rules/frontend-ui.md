@@ -1,0 +1,7 @@
+- [UI001] Every interactive element must have an `aria-label` or equivalent accessible name for screen readers
+- [UI002] Avoid `@apply` in CSS files; keep Tailwind utility classes in component files to make styles co-located and searchable
+- [UI003] Always provide explicit `width` and `height` attributes for images and icons to prevent Cumulative Layout Shift (CLS)
+- [UI004] Use semantic HTML elements (`<button>`, `<nav>`, `<main>`, `<article>`) instead of generic `<div>` with click handlers
+- [UI005] Ensure color contrast ratio meets WCAG AA standard (4.5:1 for normal text, 3:1 for large text)
+- [UI006] Never use `autofocus` on form fields inside modals without also managing focus trap and return focus on close
+- [UI007] Prefer CSS transitions over JavaScript-driven animations; use `prefers-reduced-motion` media query for accessibility

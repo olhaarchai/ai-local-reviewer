@@ -1,0 +1,7 @@
+- [CI001] Always pin third-party actions to a specific commit SHA, not `@v1` or `@master`, to prevent supply chain attacks
+- [CI002] Use the `permissions:` key to set minimal scopes for `GITHUB_TOKEN`; default to `contents: read` and add only what the job needs
+- [CI003] Always cache dependencies (node_modules, pip cache, cargo registry) to reduce runner time and costs
+- [CI004] Store secrets in GitHub Secrets; never hardcode tokens or passwords in workflow YAML files
+- [CI005] Use `concurrency:` groups with `cancel-in-progress: true` to avoid wasting runner minutes on stale runs
+- [CI006] Separate CI (test) and CD (deploy) workflows; do not mix them in a single workflow file
+- [CI007] Set `timeout-minutes:` on every job to prevent hung runners from consuming credits indefinitely

@@ -1,0 +1,8 @@
+- [RXT01] Use Server Components by default; add "use client" only when interactivity or browser APIs are needed
+- [RXT02] Wrap callbacks passed to child components in useCallback to prevent unnecessary re-renders
+- [RXT03] Always use the Next.js <Image /> component instead of <img> for automatic optimization and lazy loading
+- [RXT04] Use Server Actions for form mutations instead of creating separate API routes
+- [RXT05] Always perform session and authorization checks inside Route Handlers before processing requests
+- [RXT06] Never expose sensitive environment variables to the client; use NEXT_PUBLIC_ prefix only for truly public values
+- [RXT07] Use next/font for font optimization to avoid layout shift and external font requests
+- [RXT08] Prefer static generation (getStaticProps / generateStaticParams) over server-side rendering when data does not change per request

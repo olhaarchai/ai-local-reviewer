@@ -1,0 +1,7 @@
+- [TST01] Maintain at least 80% test coverage for all business logic (Services, domain functions); enforce in CI
+- [TST02] Use Testcontainers for integration tests that require a database, cache, or message broker; never mock infrastructure in integration tests
+- [TST03] Unit tests must not make real network calls; use dependency injection to mock external services
+- [TST04] Every bug fix must be accompanied by a regression test that reproduces the bug before the fix
+- [TST05] Test file naming: `<module>.test.ts` or `test_<module>.py`; keep test files co-located with the source they test
+- [TST06] Use descriptive test names that read as specifications: `it("returns 401 when token is expired")`
+- [TST07] Do not share mutable state between tests; each test must be independent and able to run in isolation

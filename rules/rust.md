@@ -1,0 +1,10 @@
+- [RS001] Never use `unwrap()` or `expect()` in production code paths; use `?` operator or `thiserror`/`anyhow` for error propagation
+- [RS002] Avoid `unsafe` blocks; if required, isolate them in a dedicated module with a safety comment explaining the invariant being upheld
+- [RS003] Use `Arc<Mutex<T>>` only when shared mutable state is genuinely needed; prefer message passing via `mpsc` or `tokio::sync` channels
+- [RS004] Never clone data unnecessarily; pass references and use lifetimes correctly to avoid heap allocations
+- [RS005] Use `#[derive(Debug, Clone, PartialEq)]` consistently on public structs
+- [RS006] All public API items must have doc comments (`///`) with at least a one-sentence description
+- [RS007] Run `cargo clippy` and `cargo fmt` in CI; treat all clippy warnings as errors with `-D warnings`
+- [RS008] Prefer `impl Trait` over `Box<dyn Trait>` where possible to avoid dynamic dispatch overhead
+- [RS009] Use `tokio` as the async runtime; never call blocking operations inside async functions without `spawn_blocking`
+- [RS010] Pin dependencies in `Cargo.toml` to a minor version (e.g. `serde = "1.0"`) to avoid unexpected breaking changes

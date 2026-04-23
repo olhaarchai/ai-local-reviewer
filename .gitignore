@@ -9,3 +9,7 @@
 __pycache__
 
 *.pem
+
+.data
+
+output

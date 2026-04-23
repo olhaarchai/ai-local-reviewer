@@ -1,0 +1,8 @@
+- [SEC01] Never use `eval()` or equivalent dynamic code execution functions with user-supplied input
+- [SEC02] Remove all `console.log`, `print`, and debug statements from production code; use a proper logging framework with log levels
+- [SEC03] Do not configure CORS with a wildcard origin (`*`) in production; always restrict to known client origins
+- [SEC04] Never store passwords in plaintext; always hash with bcrypt, argon2, or scrypt with a per-user salt
+- [SEC05] Validate and sanitize all user input at the boundary of the application; never trust client-supplied data
+- [SEC06] Use Content-Security-Policy headers to mitigate XSS; disallow `unsafe-inline` scripts
+- [SEC07] Rotate secrets and tokens on a schedule; never use tokens that never expire for machine-to-machine auth
+- [SEC08] Use HTTPS everywhere; reject plaintext HTTP connections in production environments

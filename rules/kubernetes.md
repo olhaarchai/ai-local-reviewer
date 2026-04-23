@@ -1,0 +1,7 @@
+- [K8S01] Every container must have explicit `resources.limits` and `resources.requests` for CPU and Memory to enable scheduler decisions
+- [K8S02] Always define `livenessProbe` and `readinessProbe` for web services so Kubernetes can detect and restart unhealthy pods
+- [K8S03] Set `runAsNonRoot: true` and `readOnlyRootFilesystem: true` in `securityContext` wherever the application allows
+- [K8S04] Never put secrets in `ConfigMap`; use `Secret` objects or external providers such as HashiCorp Vault or AWS Secrets Manager
+- [K8S05] Use `PodDisruptionBudget` for all stateful workloads to guarantee availability during voluntary disruptions
+- [K8S06] Set `imagePullPolicy: Always` in production to ensure the latest digest of a pinned tag is pulled
+- [K8S07] Use `NetworkPolicy` to restrict pod-to-pod communication to only what is required

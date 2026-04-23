@@ -1,0 +1,9 @@
+- [SH001] Always start scripts with `#!/usr/bin/env bash` and `set -euo pipefail` to fail fast on errors and unset variables
+- [SH002] Quote all variable expansions: use `"$var"` not `$var` to prevent word splitting and glob expansion
+- [SH003] Never pass user-supplied input directly to `eval` or backtick subshells; this is a code injection risk
+- [SH004] Use `mktemp` to create temporary files instead of hardcoded paths like `/tmp/myfile`
+- [SH005] Check for command existence with `command -v tool` before using it; fail with a clear error message if missing
+- [SH006] Do not store secrets in script environment variables; read them from a file with `chmod 600` permissions
+- [SH007] Use `[[ ]]` instead of `[ ]` for conditional expressions; `[[ ]]` is safer and supports regex matching
+- [SH008] Clean up temporary files via `trap 'rm -f "$tmpfile"' EXIT` to ensure cleanup on any exit path
+- [SH009] Use parameterized queries or prepared statements for SQL; never build SQL by string concatenation in shell

@@ -1,0 +1,7 @@
+- [NST01] Define DTOs with class-validator decorators for all incoming request bodies; never trust raw request data
+- [NST02] Keep business logic in Services, not Controllers; Controllers should only delegate to Services and return responses
+- [NST03] Use the TypeORM Repository pattern via dependency injection; never instantiate repositories directly
+- [NST04] Use Guards for authentication and Interceptors for cross-cutting concerns such as logging and response transformation
+- [NST05] Apply the @UseGuards() decorator at the controller or route level, not inside service methods
+- [NST06] Use ConfigModule and ConfigService for all environment variable access; never call process.env directly in business code
+- [NST07] Prefix all module paths consistently; use barrel exports (index.ts) per module
