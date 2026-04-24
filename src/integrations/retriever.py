@@ -4,7 +4,8 @@ from typing import Any
 
 from sentence_transformers import SentenceTransformer
 
-from src.integrations.sparse_index import SPARSE_INDEX
+from src.integrations.sparse_index import SPARSE_INDEX, tokenize
+from src.review.utils import extract_pr_files, state_get
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +70,6 @@ def _classify_file(path: str) -> str | None:
     return _EXT_TO_CATEGORY.get(ext)
 
 
-def extract_pr_files(diff: str) -> list[str]:
-    """Extract changed file paths from diff --git headers only."""
-    return re.findall(r"^diff --git a/\S+ b/(\S+)", diff, re.MULTILINE)
-
-
 def detect_stack(diff: str) -> list[str]:
     """Detect tech categories from actual changed file paths, not diff body content."""
     paths = extract_pr_files(diff)
@@ -82,12 +78,6 @@ def detect_stack(diff: str) -> list[str]:
         if cat not in detected:
             detected.append(cat)
     return detected
-
-
-def _state_get(state: dict | Any, key: str, default: Any = None) -> Any:
-    if isinstance(state, dict):
-        return state.get(key, default)
-    return getattr(state, key, default)
 
 
 def _rrf_merge(
@@ -105,9 +95,11 @@ def _rrf_merge(
 
 
 async def retriever_node(state: dict | Any) -> dict:
-    diff = _state_get(state, "diff", "")
+    from langgraph.types import Overwrite
+
+    diff = state_get(state, "diff", "")
     if not diff:
-        return {"guidelines": []}
+        return {"guidelines": [], "rag_trace": Overwrite(value=[])}
 
     from src.core.config import settings
     from src.review.state import Guideline
@@ -120,6 +112,7 @@ async def retriever_node(state: dict | Any) -> dict:
     search_query = (
         f"Stack: {', '.join(detected_stack)}. Files: {paths_str}. Changes: {diff[:400]}"
     )
+    bm25_tokens = tokenize(search_query)
     logger.debug("[retriever] Enriched query: %s", search_query[:120])
 
     tech_cats = [c for c in detected_stack if c not in _ALWAYS_INCLUDE]
@@ -180,6 +173,21 @@ async def retriever_node(state: dict | Any) -> dict:
 
     all_guidelines: list[Guideline] = []
     bm25_enabled = settings.bm25_enabled
+    rag_trace: list[dict[str, Any]] = []
+    # Shared inputs snapshot — identical for every category, inlined once per entry
+    # so the review log is self-contained when read glanced.
+    shared_inputs = {
+        "detected_stack": detected_stack,
+        "file_paths": file_paths[:20],
+        "search_query": search_query,
+        "bm25_tokens": bm25_tokens[:30],
+        "milvus_score_threshold": settings.milvus_score_threshold,
+        "milvus_rules_per_category": per_cat_final,
+        "milvus_overfetch_multiplier": over_fetch_mult,
+        "bm25_enabled": bm25_enabled,
+        "use_reranker": settings.use_reranker,
+        "milvus_ok": milvus_ok,
+    }
 
     for cat in detected_stack:
         dense_hits = dense_by_cat.get(cat, [])
@@ -199,6 +207,17 @@ async def retriever_node(state: dict | Any) -> dict:
         # Fallback: if Milvus is unreachable AND BM25 empty/disabled, skip category.
         if not dense_keys and not sparse_keys:
             logger.info("[RAG] Category '%s': dense_hits=0 bm25_hits=0 fused=0", cat)
+            rag_trace.append(
+                {
+                    "category": cat,
+                    "inputs": shared_inputs,
+                    "dense_hits": [],
+                    "sparse_hits": [],
+                    "fused_order": [],
+                    "kept": [],
+                    "reranked": False,
+                }
+            )
             continue
 
         if dense_keys and sparse_keys:
@@ -208,7 +227,7 @@ async def retriever_node(state: dict | Any) -> dict:
         else:
             fused_texts = [t for t, _ in sparse_keys]
 
-        reranked_count = 0
+        reranked = False
         if reranker is not None and len(fused_texts) > 1:
             try:
                 pairs = [(search_query, t) for t in fused_texts]
@@ -217,31 +236,49 @@ async def retriever_node(state: dict | Any) -> dict:
                     zip(scores, fused_texts), key=lambda x: x[0], reverse=True
                 )
                 fused_texts = [t for _, t in ranked]
-                reranked_count = len(fused_texts)
+                reranked = True
             except Exception as exc:
                 logger.warning("[retriever] Reranker failed (%s), skipping", exc)
 
         top_texts = fused_texts[:per_cat_final]
         all_guidelines.extend(Guideline.from_text(t, cat) for t in top_texts)
 
+        rag_trace.append(
+            {
+                "category": cat,
+                "inputs": shared_inputs,
+                "dense_hits": [{"text": t, "distance": d} for t, d in dense_keys],
+                "sparse_hits": [{"text": t, "score": s} for t, s in sparse_keys],
+                "fused_order": fused_texts,
+                "kept": top_texts,
+                "reranked": reranked,
+            }
+        )
+
         logger.info(
-            "[RAG] Category '%s': dense_hits=%d bm25_hits=%d fused=%d reranked=%d",
+            "[RAG] Category '%s': dense_hits=%d bm25_hits=%d fused=%d kept=%d reranked=%s",
             cat,
             len(dense_keys),
             len(sparse_keys),
+            len(fused_texts),
             len(top_texts),
-            reranked_count,
+            reranked,
         )
 
-    if not milvus_ok and not all_guidelines:
-        # If both dense AND sparse produced zero, behave like the legacy empty path.
-        return {"guidelines": [], "stack_context": stack_context}
-
+    dense_total = sum(len(e["dense_hits"]) for e in rag_trace)
+    bm25_total = sum(len(e["sparse_hits"]) for e in rag_trace)
     logger.info(
-        "[retriever] Found %d relevant guidelines total (milvus_ok=%s, bm25=%s, rerank=%s)",
+        "[retriever] cats=%s dense_total=%d bm25_total=%d kept=%d milvus_ok=%s rerank=%s",
+        ",".join(detected_stack),
+        dense_total,
+        bm25_total,
         len(all_guidelines),
         milvus_ok,
-        bm25_enabled,
         bool(reranker),
     )
-    return {"guidelines": all_guidelines, "stack_context": stack_context}
+
+    return {
+        "guidelines": all_guidelines,
+        "stack_context": stack_context,
+        "rag_trace": Overwrite(value=rag_trace),
+    }

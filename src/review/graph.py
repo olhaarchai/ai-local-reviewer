@@ -1,5 +1,6 @@
 import logging
 from contextlib import AsyncExitStack
+from functools import partial
 from pathlib import Path
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -7,39 +8,34 @@ from langgraph.graph import END, START, StateGraph
 
 from src.core.config import settings
 from src.integrations.retriever import retriever_node
+from src.review.agents.analyst import ANALYSTS
 from src.review.nodes import (
+    analyst_node,
     critic_node,
     filter_node,
     hitl_gate_node,
     linter_node,
     retry_node,
-    security_analyst_node,
-    style_analyst_node,
     summary_node,
 )
 from src.review.state import ReviewerState
+from src.review.utils import state_get
 
 builder = StateGraph(ReviewerState)
 
 logger = logging.getLogger(__name__)
 
 
-def _state_get(state: ReviewerState | dict, key: str, default=None):
-    if isinstance(state, dict):
-        return state.get(key, default)
-    return getattr(state, key, default)
-
-
 def _route_after_critic(state: ReviewerState | dict) -> str:
-    is_valid = bool(_state_get(state, "is_valid", False))
-    iterations = int(_state_get(state, "iterations", 0) or 0)
+    is_valid = bool(state_get(state, "is_valid", False))
+    iterations = int(state_get(state, "iterations", 0) or 0)
     if is_valid or iterations >= settings.max_critic_iterations:
         return "hitl_gate"
     return "retry"
 
 
 def _route_after_hitl(state: ReviewerState | dict) -> str:
-    return "retry" if _state_get(state, "route") == "retry" else "summarizer"
+    return "retry" if state_get(state, "route") == "retry" else "summarizer"
 
 
 async def enter_checkpointer(exit_stack: AsyncExitStack):
@@ -76,8 +72,7 @@ builder.add_node("retriever", retriever_node)
 builder.add_node("summarizer", summary_node)
 
 agent_map = {
-    "security": ("security_analyst", security_analyst_node),
-    "style": ("style_analyst", style_analyst_node),
+    key: (cfg.log_label, partial(analyst_node, key)) for key, cfg in ANALYSTS.items()
 }
 enabled_agents = [a for a in settings.enabled_agents if a in agent_map]
 

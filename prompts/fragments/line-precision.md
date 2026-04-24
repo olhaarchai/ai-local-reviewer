@@ -1,0 +1,1 @@
+CRITICAL: Only comment on lines that start with "+" in the diff. Use the hunk header (@@ -L,l +L,l @@) to calculate the correct absolute line number. If you are unsure of the exact line number, skip the comment — do NOT guess.

@@ -61,5 +61,12 @@ class ReviewerState(BaseModel):
     raw_responses: Annotated[list[str], operator.add] = Field(default_factory=list)
     route: Optional[str] = None
     critic_issues: list[dict[str, Any]] = Field(default_factory=list)
-    summary_override: Optional[str] = None
     timings: Annotated[Timings, operator.add] = Field(default_factory=list)
+
+    # Diagnostic traces — populated by retriever/analyst/critic so review_log
+    # can render a full "what went in / what came out" picture per stage.
+    rag_trace: list[dict[str, Any]] = Field(default_factory=list)
+    analyst_traces: Annotated[list[dict[str, Any]], operator.add] = Field(
+        default_factory=list
+    )
+    critic_counts: dict[str, int] = Field(default_factory=dict)

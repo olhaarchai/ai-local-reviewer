@@ -103,22 +103,17 @@ GITHUB_WEBHOOK_SECRET=your_webhook_secret         # Webhook secret
 GITHUB_PRIVATE_KEY_PATH=./oh-local-reviewer-ai.pem  # Path to .pem file
 GITHUB_BOT_NAME=your-bot-name                     # Bot login (without [bot] suffix)
 
-OLLAMA_MODEL_SECURITY=qwen2.5:7b                  # Security analyst model (tool-capable)
-OLLAMA_MODEL_STYLE=qwen2.5:3b                     # Style analyst model (tool-capable)
-OLLAMA_MODEL_FAST=llama3.2:1b                     # Summarizer model
+OLLAMA_MODEL_SECURITY=qwen2.5:7b                  # Security analyst model
+OLLAMA_MODEL_STYLE=qwen2.5:3b                     # Style analyst model
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_REQUEST_TIMEOUT=300
-SUMMARIZER_USE_LLM=false
 
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
 CHECKPOINT_SQLITE_PATH=.data/reviewer_checkpoints.sqlite
 # CHECKPOINT_POSTGRES_DSN=postgresql+asyncpg://...
 
-WEB_SEARCH_MAX_RESULTS=5
-READ_URL_MAX_CHARS=5000
 MAX_CRITIC_ITERATIONS=3
-AGENT_RECURSION_LIMIT=2
 ENABLED_AGENTS=security,style
 
 LOG_LEVEL=INFO
