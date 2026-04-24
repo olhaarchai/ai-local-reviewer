@@ -95,11 +95,9 @@ def _rrf_merge(
 
 
 async def retriever_node(state: dict | Any) -> dict:
-    from langgraph.types import Overwrite
-
     diff = state_get(state, "diff", "")
     if not diff:
-        return {"guidelines": [], "rag_trace": Overwrite(value=[])}
+        return {"guidelines": [], "rag_trace": []}
 
     from src.core.config import settings
     from src.review.state import Guideline
@@ -113,7 +111,10 @@ async def retriever_node(state: dict | Any) -> dict:
         f"Stack: {', '.join(detected_stack)}. Files: {paths_str}. Changes: {diff[:400]}"
     )
     bm25_tokens = tokenize(search_query)
-    logger.debug("[retriever] Enriched query: %s", search_query[:120])
+    logger.info(
+        "[retriever] query: %r (%d chars)", search_query[:200], len(search_query)
+    )
+    logger.info("[retriever] bm25_tokens (first 15): %s", bm25_tokens[:15])
 
     tech_cats = [c for c in detected_stack if c not in _ALWAYS_INCLUDE]
     context_lines = "\n".join(f"  - {p}" for p in file_paths[:20])
@@ -264,6 +265,12 @@ async def retriever_node(state: dict | Any) -> dict:
             len(top_texts),
             reranked,
         )
+        for i, (text, dist) in enumerate(dense_keys[:3], 1):
+            logger.info("[RAG]   %s dense#%d d=%.3f: %s", cat, i, dist, text[:120])
+        for i, (text, score) in enumerate(sparse_keys[:3], 1):
+            logger.info("[RAG]   %s bm25#%d s=%.3f: %s", cat, i, score, text[:120])
+        for i, text in enumerate(top_texts, 1):
+            logger.info("[RAG]   %s KEPT#%d: %s", cat, i, text[:120])
 
     dense_total = sum(len(e["dense_hits"]) for e in rag_trace)
     bm25_total = sum(len(e["sparse_hits"]) for e in rag_trace)
@@ -280,5 +287,5 @@ async def retriever_node(state: dict | Any) -> dict:
     return {
         "guidelines": all_guidelines,
         "stack_context": stack_context,
-        "rag_trace": Overwrite(value=rag_trace),
+        "rag_trace": rag_trace,
     }

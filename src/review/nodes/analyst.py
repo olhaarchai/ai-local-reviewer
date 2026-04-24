@@ -73,9 +73,12 @@ async def analyst_node(agent_key: str, state: ReviewerState) -> dict:
 
     from src.core.config import settings
 
+    provider = settings.type_agents or "local"
     model_name = getattr(settings, cfg.model_setting, None)
-    num_ctx = getattr(settings, cfg.num_ctx_setting, None)
-    logger.info("[%s] Starting with model=%s", label, model_name)
+    num_ctx = (
+        getattr(settings, cfg.num_ctx_setting, None) if provider == "local" else None
+    )
+    logger.info("[%s|%s] Starting with model=%s", label, provider, model_name)
     started_at = time.perf_counter()
 
     system_content = compose_analyst_system(cfg.prompt_dir, state)
@@ -84,6 +87,21 @@ async def analyst_node(agent_key: str, state: ReviewerState) -> dict:
         logger.info("[%s] Injected %d project rules", label, len(guidelines))
 
     diff = state_get(state, "diff", "")
+    # Rough token estimate: 1 token ≈ 3.5 chars for English code/prose.
+    est_tokens = (len(system_content) + len(diff)) // 4
+    logger.info(
+        "[%s|%s] Sending to LLM: sys_chars=%d diff_chars=%d total_chars=%d ~tokens=%d num_ctx=%s",
+        label,
+        provider,
+        len(system_content),
+        len(diff),
+        len(system_content) + len(diff),
+        est_tokens,
+        num_ctx,
+    )
+    logger.debug("[%s] SYSTEM PROMPT:\n%s", label, system_content)
+    logger.debug("[%s] USER DIFF:\n%s", label, diff)
+
     agent = build_analyst(cfg, system_content)
     result = await agent.ainvoke(
         {"messages": [HumanMessage(content=f"DIFF:\n{diff}")]},
@@ -96,8 +114,9 @@ async def analyst_node(agent_key: str, state: ReviewerState) -> dict:
     )
 
     logger.info(
-        "[%s] model=%s sys_chars=%d diff_chars=%d raw_chars=%d structured=%s comments=%d took=%.2fs",
+        "[%s|%s] model=%s sys_chars=%d diff_chars=%d raw_chars=%d structured=%s comments=%d took=%.2fs",
         label,
+        provider,
         model_name,
         len(system_content),
         len(diff),
@@ -112,6 +131,7 @@ async def analyst_node(agent_key: str, state: ReviewerState) -> dict:
     messages = result.get("messages") if isinstance(result, dict) else None
     trace = {
         "agent": agent_key,
+        "provider": provider,
         "model": model_name,
         "temperature": cfg.temperature,
         "num_ctx": num_ctx,

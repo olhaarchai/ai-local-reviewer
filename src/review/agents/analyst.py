@@ -109,18 +109,29 @@ def _build_llm(cfg: AnalystConfig, model_name: str):
 
 
 def build_analyst(cfg: AnalystConfig, system_prompt: str):
-    """Provider-agnostic analyst factory. Tools disabled by design."""
+    """Provider-agnostic analyst factory. Tools disabled by design.
+
+    For local Ollama we rely on `format=json` at the API level + manual JSON
+    parse in nodes/analyst.py — passing `response_format` here triggers
+    tool-calling-based structured output, which qwen2.5:3b cannot produce
+    reliably and ends up in an infinite retry loop inside create_agent.
+    Cloud providers (Anthropic/Gemini/OpenAI) have robust native tool-calling,
+    so structured output via response_format works and is preferred there.
+    """
     from src.core.config import settings
 
     model_name = getattr(settings, cfg.model_setting, None)
     if not model_name:
         raise ValueError(f"{cfg.model_setting.upper()} is not set")
 
+    provider = settings.type_agents or "local"
     llm = _build_llm(cfg, model_name)
-    return create_agent(
-        model=llm,
-        tools=[],
-        system_prompt=system_prompt,
-        response_format=cfg.response_format,
-        name=cfg.log_label,
-    )
+    agent_kwargs: dict = {
+        "model": llm,
+        "tools": [],
+        "system_prompt": system_prompt,
+        "name": cfg.log_label,
+    }
+    if provider != "local":
+        agent_kwargs["response_format"] = cfg.response_format
+    return create_agent(**agent_kwargs)

@@ -373,9 +373,17 @@ def write_review_log(
         if output_dir is not None:
             out_dir = Path(output_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
-            path = out_dir / f"{_slug(repo_name)}-pr{int(pr_number)}-{_timestamp()}.md"
+            stamp = _timestamp()
+            path = out_dir / f"{_slug(repo_name)}-pr{int(pr_number)}-{stamp}.md"
             path.write_text(content, encoding="utf-8")
             logger.info("[review_log] Wrote %s", path)
+            diff = state_get(state, "diff", "")
+            if diff:
+                diff_path = (
+                    out_dir / f"{_slug(repo_name)}-pr{int(pr_number)}-{stamp}.diff"
+                )
+                diff_path.write_text(diff, encoding="utf-8")
+                logger.info("[review_log] Wrote %s", diff_path)
             return path
 
         result = save_review_log.invoke(
@@ -390,7 +398,17 @@ def write_review_log(
         if isinstance(result, str) and result.startswith("Error:"):
             logger.warning("[review_log] save_review_log reported: %s", result)
             return None
-        return Path(result) if isinstance(result, str) else None
+        md_path = Path(result) if isinstance(result, str) else None
+        # Dump raw diff alongside the .md for offline inspection.
+        diff = state_get(state, "diff", "")
+        if md_path and diff:
+            diff_path = md_path.with_suffix(".diff")
+            try:
+                diff_path.write_text(diff, encoding="utf-8")
+                logger.info("[review_log] Wrote %s", diff_path)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[review_log] Failed to write diff: %s", exc)
+        return md_path
     except Exception as exc:  # noqa: BLE001
         logger.warning("[review_log] Failed to write log: %s", exc)
         return None
