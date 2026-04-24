@@ -71,7 +71,12 @@ def _with_progress(name: str, fn):
             log_exit(tid, name, time.perf_counter() - start)
             return result
         except BaseException as exc:
-            log_error(tid, name, exc)
+            from langgraph.errors import GraphInterrupt
+
+            if isinstance(exc, GraphInterrupt):
+                log_pause(tid, name, "HITL interrupt — waiting for user")
+            else:
+                log_error(tid, name, exc)
             raise
 
     return swrapped
