@@ -20,6 +20,13 @@ _EXT_TO_CATEGORY: dict[str, str] = {
     "sh": "shell-scripts",
 }
 _ALWAYS_INCLUDE = ["security-owasp", "api-design", "common"]
+# Extra categories a file accepts rules from, beyond its primary _EXT_TO_CATEGORY.
+# Example: a `.tsx` file's primary category is `react-nextjs`, but TypeScript
+# rules (TS001, TS004, …) clearly apply too because .tsx IS TypeScript. Without
+# this map, critic G4 rejects correct findings like `[TS001] any` on a .tsx.
+_COMPATIBLE_CATEGORIES: dict[str, set[str]] = {
+    "react-nextjs": {"typescript"},
+}
 _COLLECTION = "code_review_rules"
 
 # Path-pattern rules for YAML files — checked in order, first match wins.

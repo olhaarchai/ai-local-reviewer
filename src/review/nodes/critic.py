@@ -18,7 +18,11 @@ from typing import Any
 
 from langgraph.types import Overwrite
 
-from src.integrations.retriever import _ALWAYS_INCLUDE, _classify_file
+from src.integrations.retriever import (
+    _ALWAYS_INCLUDE,
+    _COMPATIBLE_CATEGORIES,
+    _classify_file,
+)
 from src.integrations.sparse_index import SPARSE_INDEX
 from src.review.state import ReviewerState
 from src.review.utils import (
@@ -164,10 +168,12 @@ def critic_node(state: ReviewerState) -> dict:
                     continue
             else:
                 rule_cat = rule_meta.get("category")
+                compat = _COMPATIBLE_CATEGORIES.get(expected_cat or "", set())
                 if (
                     expected_cat is not None
                     and rule_cat != expected_cat
                     and rule_cat not in _ALWAYS_INCLUDE
+                    and rule_cat not in compat
                 ):
                     _reject(
                         comment,
