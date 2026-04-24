@@ -48,8 +48,13 @@ class Settings:
     github_private_key_path: str | None
     github_bot_name: str | None
 
-    ollama_model_security: str | None
-    ollama_model_style: str | None
+    type_agents: str
+    model_security: str | None
+    model_style: str | None
+    anthropic_api_key: str | None
+    google_api_key: str | None
+    openai_api_key: str | None
+
     ollama_base_url: str | None
     ollama_request_timeout: float
 
@@ -87,8 +92,12 @@ settings = Settings(
     github_app_id=os.getenv("GITHUB_APP_ID"),
     github_private_key_path=os.getenv("GITHUB_PRIVATE_KEY_PATH"),
     github_bot_name=os.getenv("GITHUB_BOT_NAME"),
-    ollama_model_security=os.getenv("OLLAMA_MODEL_SECURITY"),
-    ollama_model_style=os.getenv("OLLAMA_MODEL_STYLE"),
+    type_agents=(os.getenv("TYPE_AGENTS") or "local").strip().lower(),
+    model_security=os.getenv("MODEL_SECURITY"),
+    model_style=os.getenv("MODEL_STYLE"),
+    anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    openai_api_key=os.getenv("OPENAI_API_KEY"),
     ollama_base_url=os.getenv("OLLAMA_BASE_URL"),
     ollama_request_timeout=_get_float("OLLAMA_REQUEST_TIMEOUT", 300.0),
     checkpoint_postgres_dsn=os.getenv("CHECKPOINT_POSTGRES_DSN"),

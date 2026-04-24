@@ -103,9 +103,13 @@ GITHUB_WEBHOOK_SECRET=your_webhook_secret         # Webhook secret
 GITHUB_PRIVATE_KEY_PATH=./oh-local-reviewer-ai.pem  # Path to .pem file
 GITHUB_BOT_NAME=your-bot-name                     # Bot login (without [bot] suffix)
 
-OLLAMA_MODEL_SECURITY=qwen2.5:7b                  # Security analyst model
-OLLAMA_MODEL_STYLE=qwen2.5:3b                     # Style analyst model
-OLLAMA_BASE_URL=http://localhost:11434
+TYPE_AGENTS=local                                 # local|anthropic|gemini|openai
+MODEL_SECURITY=qwen2.5:7b                         # Security analyst model
+MODEL_STYLE=qwen2.5:3b                            # Style analyst model
+# ANTHROPIC_API_KEY=...                           # needed when TYPE_AGENTS=anthropic
+# GOOGLE_API_KEY=...                              # needed when TYPE_AGENTS=gemini
+# OPENAI_API_KEY=...                              # needed when TYPE_AGENTS=openai
+OLLAMA_BASE_URL=http://localhost:11434            # used only when TYPE_AGENTS=local
 OLLAMA_REQUEST_TIMEOUT=300
 
 MILVUS_HOST=localhost
