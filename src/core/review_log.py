@@ -292,8 +292,9 @@ def render_review_md(
     timings = state_get(state, "timings", []) or []
 
     models = (
-        f"- security: `{settings.ollama_model_security}`\n"
-        f"- style: `{settings.ollama_model_style}`"
+        f"- provider: `{settings.type_agents}`\n"
+        f"- security: `{settings.model_security}`\n"
+        f"- style: `{settings.model_style}`"
     )
 
     feedback_block = f"\n> **Guidance:** {hitl_feedback}" if hitl_feedback else ""
