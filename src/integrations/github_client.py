@@ -82,6 +82,13 @@ class GitHubClient:
             if c.get("path") and c.get("line") and c.get("body")
         ]
 
+        logger.info(
+            "[github_client] POST /reviews — %d inline comment(s) for %s#%d",
+            len(github_comments),
+            repo_name,
+            pr_number,
+        )
+
         async with httpx.AsyncClient(headers=headers) as client:
             response = await client.post(
                 url,
@@ -93,10 +100,14 @@ class GitHubClient:
             )
 
             if response.status_code == 422:
+                errors = response.json().get("errors") or []
                 logger.warning(
-                    "[github_client] 422 on inline comments (%s), falling back to summary-only",
-                    response.json().get("errors"),
+                    "[github_client] GitHub rejected inline comments (422) — "
+                    "%d error(s). Falling back to summary-only.",
+                    len(errors),
                 )
+                for err in errors:
+                    logger.warning("[github_client]   rejected: %s", err)
                 # Append only missing findings to avoid duplicates.
                 missing_lines = []
                 for c in github_comments:
@@ -104,6 +115,10 @@ class GitHubClient:
                     if marker in body:
                         continue
                     missing_lines.append(f"- `{marker}` — {c['body']}")
+                logger.info(
+                    "[github_client] fallback body: %d finding(s) appended",
+                    len(missing_lines),
+                )
                 if missing_lines:
                     issues_md = "\n".join(missing_lines)
                     fallback_body = f"{body}\n\n---\n**Findings (inline comments unavailable):**\n{issues_md}"

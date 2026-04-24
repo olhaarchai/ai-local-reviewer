@@ -210,8 +210,19 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
                 logger.info("── summary ──\n%s", ai_summary)
 
                 if ai_comments:
+                    pre_dedup = len(ai_comments)
                     ai_comments = dedup_comments(ai_comments)
-                    logger.info("posting %d comment(s) to GitHub…", len(ai_comments))
+                    post_dedup = len(ai_comments)
+                    if pre_dedup != post_dedup:
+                        logger.info(
+                            "dedup collapsed %d → %d comment(s)", pre_dedup, post_dedup
+                        )
+                    logger.info(
+                        "posting %d comment(s) to GitHub (inline at path:line)…",
+                        post_dedup,
+                    )
+                    for c in ai_comments:
+                        logger.info("  → %s:%s", c.get("path"), c.get("line"))
                     await gh_client.post_review(
                         repo_name, pr_number, ai_summary, ai_comments
                     )
