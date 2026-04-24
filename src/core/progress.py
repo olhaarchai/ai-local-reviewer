@@ -47,8 +47,10 @@ def get_or_create_run_dir(thread_id: str, base: str = "output/processes") -> Pat
         cached = _run_dirs.get(thread_id)
         if cached is not None:
             return cached
+        from src.core.review_log import model_slug
+
         stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-        run_dir = Path(base) / f"{_slug(thread_id)}-{stamp}"
+        run_dir = Path(base) / f"{_slug(thread_id)}-{model_slug()}-{stamp}"
         run_dir.mkdir(parents=True, exist_ok=True)
         _run_dirs[thread_id] = run_dir
         _append(run_dir, f"{_now()}  START  thread_id={thread_id}")

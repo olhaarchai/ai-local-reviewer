@@ -34,6 +34,33 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 
 
+def model_slug() -> str:
+    """Filename-safe tag for the currently configured LLM(s).
+
+    Shape: `<provider>-<model1>[_<model2>...]` — provider plus the model name
+    of each enabled agent, joined with `_`. Example: `local-qwen2.5-3b`,
+    `anthropic-claude-sonnet-4-5_claude-haiku-4-5`. Goes into output filenames
+    so a directory of runs is instantly classifiable by model.
+    """
+    try:
+        from src.review.agents.analyst import ANALYSTS
+
+        provider = (settings.type_agents or "local").strip() or "local"
+        models: list[str] = []
+        for key in settings.enabled_agents:
+            cfg = ANALYSTS.get(key)
+            if cfg is None:
+                continue
+            name = getattr(settings, cfg.model_setting, None)
+            if name:
+                models.append(name)
+        if not models:
+            return _slug(provider)
+        return _slug(f"{provider}-{'_'.join(models)}")
+    except Exception:  # noqa: BLE001 — filenames must never break on edge cases
+        return "model"
+
+
 def _safe(fn, *args, **kwargs) -> str:
     """Call a formatter; on failure return a placeholder so the log still renders."""
     try:
@@ -375,14 +402,13 @@ def write_review_log(
             out_dir = Path(output_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
             stamp = _timestamp()
-            path = out_dir / f"{_slug(repo_name)}-pr{int(pr_number)}-{stamp}.md"
+            base = f"{_slug(repo_name)}-pr{int(pr_number)}-{model_slug()}-{stamp}"
+            path = out_dir / f"{base}.md"
             path.write_text(content, encoding="utf-8")
             logger.info("[review_log] Wrote %s", path)
             diff = state_get(state, "diff", "")
             if diff:
-                diff_path = (
-                    out_dir / f"{_slug(repo_name)}-pr{int(pr_number)}-{stamp}.diff"
-                )
+                diff_path = out_dir / f"{base}.diff"
                 diff_path.write_text(diff, encoding="utf-8")
                 logger.info("[review_log] Wrote %s", diff_path)
             return path
