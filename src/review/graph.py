@@ -41,6 +41,12 @@ def _with_progress(name: str, fn):
     def _thread_id(config) -> str:
         return ((config or {}).get("configurable") or {}).get("thread_id") or "default"
 
+    def _extract_metrics(result):
+        """Pop `_progress_metrics` from a node's payload — never leaks into state."""
+        if isinstance(result, dict):
+            return result.pop("_progress_metrics", None)
+        return None
+
     if is_async:
 
         async def awrapped(state, config=None):
@@ -49,7 +55,8 @@ def _with_progress(name: str, fn):
             start = time.perf_counter()
             try:
                 result = await fn(state, config) if takes_config else await fn(state)
-                log_exit(tid, name, time.perf_counter() - start)
+                metrics = _extract_metrics(result)
+                log_exit(tid, name, time.perf_counter() - start, metrics)
                 return result
             except BaseException as exc:
                 from langgraph.errors import GraphInterrupt
@@ -68,7 +75,8 @@ def _with_progress(name: str, fn):
         start = time.perf_counter()
         try:
             result = fn(state, config) if takes_config else fn(state)
-            log_exit(tid, name, time.perf_counter() - start)
+            metrics = _extract_metrics(result)
+            log_exit(tid, name, time.perf_counter() - start, metrics)
             return result
         except BaseException as exc:
             from langgraph.errors import GraphInterrupt

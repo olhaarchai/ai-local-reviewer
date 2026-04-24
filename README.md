@@ -150,3 +150,36 @@ Copy the HTTPS URL from ngrok and set it in your GitHub App settings:
 4. The LangGraph pipeline runs: filter → retriever → security/style analysts → critic loop → summarizer.
 5. Optional HITL pause allows editing/approval before final summary.
 6. The bot posts inline comments and a summary review back to GitHub.
+
+---
+
+## Pipeline walkthrough
+
+The LangGraph pipeline runs nine nodes per PR. Descriptions are the single source of truth in [`src/core/pipeline_doc.py`](./src/core/pipeline_doc.py).
+
+| Node | Purpose |
+|------|---------|
+| **filter** | strips lockfiles, binaries and noise from the diff |
+| **retriever** | pulls project rules from Milvus + BM25 by detected stack |
+| **linter** | runs ruff on Python added lines as deterministic pre-findings |
+| **security_analyst** | LLM scan for OWASP-class vulnerabilities |
+| **style_analyst** | LLM scan for type safety, dead code, framework idioms |
+| **critic** | applies G1-G4 guards + rule-ID membership to LLM comments |
+| **retry** | clears analyst state for another pass on critic feedback |
+| **hitl_gate** | pauses for human approve / retry decision |
+| **summarizer** | deterministic executive summary from surviving comments |
+
+Read [`INSTRUCTION.md`](./INSTRUCTION.md) for the full narrative with rationale per design choice.
+
+---
+
+## Reading a run's output
+
+Every webhook trigger creates one folder under `output/processes/<repo>-<pr>-<timestamp>/`:
+
+- `progress.log` — stage timeline with `ENTER` / `EXIT` events, descriptions, and per-node metrics. Read this first.
+- `review.md` — full transcript: RAG breakdown, analyst prompts, raw LLM output, critic counts, surviving comments.
+- `diff.patch` — exact diff the analysts saw, after filtering.
+- `<agent>-prompt.txt` — system + user message for each LLM call. Paste into `ollama run` to reproduce.
+
+See [`INSTRUCTION.md`](./INSTRUCTION.md#how-to-read-a-run) for the full guide.

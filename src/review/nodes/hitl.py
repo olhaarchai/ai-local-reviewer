@@ -18,7 +18,7 @@ def hitl_gate_node(state: ReviewerState) -> dict:
 
     if settings.hitl_auto_approve:
         logger.info("[hitl_gate] auto-approve enabled — passing through")
-        return {"route": "approve"}
+        return {"route": "approve", "_progress_metrics": {"action": "auto-approve"}}
 
     comments = state_get(state, "comments", []) or []
     iterations = state_get(state, "iterations", 0)
@@ -54,7 +54,8 @@ def hitl_gate_node(state: ReviewerState) -> dict:
             "is_valid": False,
             "iterations": 0,
             "route": "retry",
+            "_progress_metrics": {"action": "retry"},
         }
 
     logger.info("[hitl_gate] user approved")
-    return {"route": "approve"}
+    return {"route": "approve", "_progress_metrics": {"action": "approve"}}

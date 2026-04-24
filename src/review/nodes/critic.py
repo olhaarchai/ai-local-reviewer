@@ -100,6 +100,7 @@ def critic_node(state: ReviewerState) -> dict:
             "critic_issues": issues,
             "critic_counts": {"FORMAT": 1} if issues else {},
             "iterations": iterations,
+            "_progress_metrics": {"in": 0, "kept": 0, "rejected": len(issues)},
         }
 
     added_lines = build_added_line_map(diff)
@@ -213,6 +214,11 @@ def critic_node(state: ReviewerState) -> dict:
         ],
         "critic_counts": counts,
         "iterations": iterations,
+        "_progress_metrics": {
+            "in": len(comments),
+            "kept": len(survivors),
+            "rejected": len(rejections),
+        },
     }
 
 
@@ -225,4 +231,5 @@ def retry_node(state: ReviewerState) -> dict:
         "raw_responses": Overwrite(value=[]),
         "critic_issues": [],
         "route": None,
+        "_progress_metrics": {"iter": iterations},
     }

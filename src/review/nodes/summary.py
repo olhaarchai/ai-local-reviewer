@@ -16,6 +16,13 @@ def summary_node(state: ReviewerState):
     )
 
     summary = build_summary_from_comments(comments)
+    metrics = {"comments": len(comments)}
     if summary:
-        return {"messages": [AIMessage(content=summary)]}
-    return {"messages": [AIMessage(content="Executive Summary\n\nNo issues found.")]}
+        return {
+            "messages": [AIMessage(content=summary)],
+            "_progress_metrics": metrics,
+        }
+    return {
+        "messages": [AIMessage(content="Executive Summary\n\nNo issues found.")],
+        "_progress_metrics": metrics,
+    }

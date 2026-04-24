@@ -69,4 +69,7 @@ def linter_node(state: ReviewerState) -> dict:
         per_file_cap,
         total_cap,
     )
-    return {"lint_findings": findings_out}
+    return {
+        "lint_findings": findings_out,
+        "_progress_metrics": {"py_files": checked, "findings": len(findings_out)},
+    }

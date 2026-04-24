@@ -190,4 +190,9 @@ async def analyst_node(
     if comments:
         payload["comments"] = comments
     payload["timings"] = [{label: duration}]
+    payload["_progress_metrics"] = {
+        "agent": agent_key,
+        "comments": len(comments),
+        "raw_chars": len(raw_response or ""),
+    }
     return payload

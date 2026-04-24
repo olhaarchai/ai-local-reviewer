@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 def filter_node(state: ReviewerState) -> dict:
     diff = state_get(state, "diff", "")
     filtered = filter_diff_noise(diff)
+    dropped = len(diff) - len(filtered)
     logger.info("[filter_node] Diff size: %d → %d chars", len(diff), len(filtered))
     return {
         "diff": filtered,
@@ -23,4 +24,5 @@ def filter_node(state: ReviewerState) -> dict:
         "iterations": 0,
         "is_valid": False,
         "lint_findings": [],
+        "_progress_metrics": {"kept_chars": len(filtered), "dropped_chars": dropped},
     }

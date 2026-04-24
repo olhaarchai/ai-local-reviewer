@@ -295,4 +295,10 @@ async def retriever_node(state: dict | Any) -> dict:
         "guidelines": all_guidelines,
         "stack_context": stack_context,
         "rag_trace": rag_trace,
+        "_progress_metrics": {
+            "kept": len(all_guidelines),
+            "cats": len(detected_stack),
+            "dense": dense_total,
+            "bm25": bm25_total,
+        },
     }

@@ -68,16 +68,43 @@ def reset_run(thread_id: str) -> None:
         _append(run_dir, f"{_now()}  END    thread_id={thread_id}")
 
 
+def _format_metrics(metrics: dict | None) -> str:
+    """Render a metrics dict as ` k1=v1 k2=v2` — empty string when None/empty."""
+    if not metrics:
+        return ""
+    parts: list[str] = []
+    for key, value in metrics.items():
+        if isinstance(value, float):
+            parts.append(f"{key}={value:.2f}")
+        else:
+            parts.append(f"{key}={value}")
+    return " " + " ".join(parts)
+
+
 def log_enter(thread_id: str, name: str) -> None:
+    """ENTER line. Description from NODE_DESCRIPTIONS is appended if available."""
+    from src.core.pipeline_doc import describe
+
     run_dir = get_or_create_run_dir(thread_id)
-    _append(run_dir, f"{_now()}  ENTER  {name}")
+    description = describe(name)
+    suffix = f"  — {description}" if description else ""
+    _append(run_dir, f"{_now()}  ENTER  {name:<16}{suffix}")
 
 
-def log_exit(thread_id: str, name: str, duration_s: float) -> None:
+def log_exit(
+    thread_id: str,
+    name: str,
+    duration_s: float,
+    metrics: dict | None = None,
+) -> None:
+    """EXIT line with duration and optional inline metrics (`key=value` pairs)."""
     run_dir = _run_dirs.get(thread_id)
     if run_dir is None:
         return
-    _append(run_dir, f"{_now()}  EXIT   {name:<16} ({duration_s:.2f}s)")
+    _append(
+        run_dir,
+        f"{_now()}  EXIT   {name:<16} ({duration_s:.2f}s){_format_metrics(metrics)}",
+    )
 
 
 def log_error(thread_id: str, name: str, exc: BaseException) -> None:
