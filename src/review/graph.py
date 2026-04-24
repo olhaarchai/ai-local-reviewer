@@ -1,4 +1,6 @@
+import inspect
 import logging
+import time
 from contextlib import AsyncExitStack
 from functools import partial
 from pathlib import Path
@@ -7,6 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from src.core.config import settings
+from src.core.progress import log_enter, log_error, log_exit, log_pause
 from src.integrations.retriever import retriever_node
 from src.review.agents.analyst import ANALYSTS
 from src.review.nodes import (
@@ -20,6 +23,59 @@ from src.review.nodes import (
 )
 from src.review.state import ReviewerState
 from src.review.utils import state_get
+
+
+def _with_progress(name: str, fn):
+    """Wrap a graph node so ENTER/EXIT land in output/processes/<thread>/progress.log.
+
+    The wrapper accepts (state, config) — LangGraph calls nodes with config when
+    the signature asks for it. We always ask, read thread_id out of
+    config.configurable, and forward to the original node (which does NOT ask
+    for config — so we strip it before calling).
+    """
+    is_async = inspect.iscoroutinefunction(fn) or (
+        hasattr(fn, "func") and inspect.iscoroutinefunction(fn.func)
+    )
+    takes_config = "config" in inspect.signature(fn).parameters
+
+    def _thread_id(config) -> str:
+        return ((config or {}).get("configurable") or {}).get("thread_id") or "default"
+
+    if is_async:
+
+        async def awrapped(state, config=None):
+            tid = _thread_id(config)
+            log_enter(tid, name)
+            start = time.perf_counter()
+            try:
+                result = await fn(state, config) if takes_config else await fn(state)
+                log_exit(tid, name, time.perf_counter() - start)
+                return result
+            except BaseException as exc:
+                from langgraph.errors import GraphInterrupt
+
+                if isinstance(exc, GraphInterrupt):
+                    log_pause(tid, name, "HITL interrupt — waiting for user")
+                else:
+                    log_error(tid, name, exc)
+                raise
+
+        return awrapped
+
+    def swrapped(state, config=None):
+        tid = _thread_id(config)
+        log_enter(tid, name)
+        start = time.perf_counter()
+        try:
+            result = fn(state, config) if takes_config else fn(state)
+            log_exit(tid, name, time.perf_counter() - start)
+            return result
+        except BaseException as exc:
+            log_error(tid, name, exc)
+            raise
+
+    return swrapped
+
 
 builder = StateGraph(ReviewerState)
 
@@ -67,9 +123,9 @@ async def enter_checkpointer(exit_stack: AsyncExitStack):
     )
 
 
-builder.add_node("filter", filter_node)
-builder.add_node("retriever", retriever_node)
-builder.add_node("summarizer", summary_node)
+builder.add_node("filter", _with_progress("filter", filter_node))
+builder.add_node("retriever", _with_progress("retriever", retriever_node))
+builder.add_node("summarizer", _with_progress("summarizer", summary_node))
 
 agent_map = {
     key: (cfg.log_label, partial(analyst_node, key)) for key, cfg in ANALYSTS.items()
@@ -82,16 +138,16 @@ builder.add_edge("filter", "retriever")
 if enabled_agents:
     # Linter (ruff) runs between retriever and analysts — feeds lint_findings
     # into their system prompts so the LLM doesn't rederive deterministic issues.
-    builder.add_node("linter", linter_node)
-    builder.add_node("critic", critic_node)
-    builder.add_node("retry", retry_node)
-    builder.add_node("hitl_gate", hitl_gate_node)
+    builder.add_node("linter", _with_progress("linter", linter_node))
+    builder.add_node("critic", _with_progress("critic", critic_node))
+    builder.add_node("retry", _with_progress("retry", retry_node))
+    builder.add_node("hitl_gate", _with_progress("hitl_gate", hitl_gate_node))
 
     builder.add_edge("retriever", "linter")
 
     for key in enabled_agents:
         node_name, node_fn = agent_map[key]
-        builder.add_node(node_name, node_fn)
+        builder.add_node(node_name, _with_progress(node_name, node_fn))
         builder.add_edge("linter", node_name)
         builder.add_edge(node_name, "critic")
 

@@ -164,10 +164,10 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
             logger.info("── PR #%s  %s  action=%s ──", pr_number, repo_name, action)
             gh_client = GitHubClient(installation_id)
 
+            thread_id = f"{repo_name}#{pr_number}"
             try:
                 diff_text = await gh_client.get_pull_request_diff(repo_name, pr_number)
                 initial_state = {"diff": diff_text, "comments": [], "messages": []}
-                thread_id = f"{repo_name}#{pr_number}"
                 reviewer_app = request.app.state.reviewer_app
                 config = {"configurable": {"thread_id": thread_id}}
                 final_output, hitl_action, hitl_feedback = await _run_with_hitl(
@@ -219,5 +219,9 @@ async def handle_webhook(request: Request, x_github_event: str = Header(None)):
 
             except Exception as exc:
                 logger.exception("review failed for PR #%s: %s", pr_number, exc)
+            finally:
+                from src.core.progress import reset_run
+
+                reset_run(thread_id)
 
     return {"status": "ok"}
