@@ -43,14 +43,18 @@ def _append(run_dir: Path, line: str) -> None:
 
 
 def get_or_create_run_dir(thread_id: str, base: str = "output/processes") -> Path:
+    """Per-run artefact directory: progress.log, review.md, diff.patch, prompts.
+
+    Folder name is `<slug(thread_id)>-<timestamp>` — model is NOT in the name
+    because one run may involve multiple analysts on different models, and
+    model info already lives inside `review.md` and each `*-prompt.txt`.
+    """
     with _lock:
         cached = _run_dirs.get(thread_id)
         if cached is not None:
             return cached
-        from src.core.review_log import model_slug
-
         stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-        run_dir = Path(base) / f"{_slug(thread_id)}-{model_slug()}-{stamp}"
+        run_dir = Path(base) / f"{_slug(thread_id)}-{stamp}"
         run_dir.mkdir(parents=True, exist_ok=True)
         _run_dirs[thread_id] = run_dir
         _append(run_dir, f"{_now()}  START  thread_id={thread_id}")

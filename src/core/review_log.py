@@ -391,50 +391,40 @@ def write_review_log(
     hitl_feedback: str | None = None,
     output_dir: str | Path | None = None,
 ) -> Path | None:
-    """Render markdown and persist via the save_review_log @tool."""
-    from src.tools.review_log_tool import save_review_log
+    """Render markdown + diff into the per-PR run directory.
+
+    Everything for one webhook run lives under
+    `output/processes/<slug>-pr<N>-<ts>/`:
+      review.md        — rendered review markdown
+      diff.patch       — raw filtered diff
+      progress.log     — stage-level ENTER/EXIT trail (written by nodes)
+      <agent>-prompt*  — exact prompt sent to each analyst
+
+    The `output_dir` param is kept only for tests / ad-hoc calls. In the
+    normal webhook flow we always land inside `get_or_create_run_dir`.
+    """
+    from src.core.progress import get_or_create_run_dir
 
     try:
         content = render_review_md(
             repo_name, pr_number, state, hitl_action, hitl_feedback
         )
         if output_dir is not None:
-            out_dir = Path(output_dir)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            stamp = _timestamp()
-            base = f"{_slug(repo_name)}-pr{int(pr_number)}-{model_slug()}-{stamp}"
-            path = out_dir / f"{base}.md"
-            path.write_text(content, encoding="utf-8")
-            logger.info("[review_log] Wrote %s", path)
-            diff = state_get(state, "diff", "")
-            if diff:
-                diff_path = out_dir / f"{base}.diff"
-                diff_path.write_text(diff, encoding="utf-8")
-                logger.info("[review_log] Wrote %s", diff_path)
-            return path
+            run_dir = Path(output_dir)
+            run_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            thread_id = f"{repo_name}#{pr_number}"
+            run_dir = get_or_create_run_dir(thread_id)
 
-        result = save_review_log.invoke(
-            {
-                "repo_name": repo_name,
-                "pr_number": int(pr_number),
-                "hitl_action": hitl_action,
-                "hitl_feedback": hitl_feedback,
-                "content": content,
-            }
-        )
-        if isinstance(result, str) and result.startswith("Error:"):
-            logger.warning("[review_log] save_review_log reported: %s", result)
-            return None
-        md_path = Path(result) if isinstance(result, str) else None
-        # Dump raw diff alongside the .md for offline inspection.
+        md_path = run_dir / "review.md"
+        md_path.write_text(content, encoding="utf-8")
+        logger.info("[review_log] Wrote %s", md_path)
+
         diff = state_get(state, "diff", "")
-        if md_path and diff:
-            diff_path = md_path.with_suffix(".diff")
-            try:
-                diff_path.write_text(diff, encoding="utf-8")
-                logger.info("[review_log] Wrote %s", diff_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[review_log] Failed to write diff: %s", exc)
+        if diff:
+            diff_path = run_dir / "diff.patch"
+            diff_path.write_text(diff, encoding="utf-8")
+            logger.info("[review_log] Wrote %s", diff_path)
         return md_path
     except Exception as exc:  # noqa: BLE001
         logger.warning("[review_log] Failed to write log: %s", exc)
