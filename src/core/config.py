@@ -85,6 +85,7 @@ class Settings:
     ollama_num_ctx_style: int
     ollama_keep_alive: str
     ollama_num_predict_analyst: int
+    diff_format: str
 
 
 settings = Settings(
@@ -130,4 +131,8 @@ settings = Settings(
     # lets the model loop into thousands of tokens of JSON garbage on
     # long-context format="json" runs — a well-known qwen2.5 failure mode.
     ollama_num_predict_analyst=_get_int("OLLAMA_NUM_PREDICT_ANALYST", 2048),
+    # `raw` (default) — send unified diff to analysts as-is.
+    # `markdown` — pre-format per-file with explicit line numbers; ~30-50%
+    # less prefill for LLM, removes @@-hunk-math error class. Experimental.
+    diff_format=(os.getenv("DIFF_FORMAT") or "raw").strip().lower(),
 )

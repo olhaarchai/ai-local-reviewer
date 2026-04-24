@@ -127,6 +127,77 @@ def build_added_content_map(diff: str) -> dict[str, str]:
     return {p: "\n".join(lines) for p, lines in content.items()}
 
 
+_EXT_TO_FENCE_LANG: dict[str, str] = {
+    "py": "python",
+    "ts": "typescript",
+    "tsx": "tsx",
+    "jsx": "jsx",
+    "js": "javascript",
+    "go": "go",
+    "rs": "rust",
+    "tf": "hcl",
+    "sh": "bash",
+    "yaml": "yaml",
+    "yml": "yaml",
+    "json": "json",
+    "md": "markdown",
+    "toml": "toml",
+}
+
+
+def format_diff_for_llm(diff: str) -> str:
+    """Convert unified diff into per-file markdown with explicit line numbers.
+
+    Output shape (one block per file with added lines):
+
+        ## <path> (added <N> lines)
+        ```<lang>
+           5: const JWT_SECRET = 'x';
+           6: const DB = 'y';
+        ```
+
+    Only `+` lines survive — analysts comment only on them anyway (critic G1
+    rejects anything outside the `+` set). Dropping context/removed/hunk-header
+    noise cuts 30-50% of prefill tokens vs raw unified diff, and making line
+    numbers explicit removes the @@-hunk-math error class that we saw trigger
+    G1 rejections in qwen2.5:7b runs.
+    """
+    files = extract_pr_files(diff)
+    ordered: dict[str, list[tuple[int, str]]] = {p: [] for p in files}
+    current_path: str | None = None
+    current_line = 0
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current_path = line[6:]
+            ordered.setdefault(current_path, [])
+        elif line.startswith("@@"):
+            m = _HUNK_RE.match(line)
+            current_line = int(m.group(1)) if m else 0
+        elif line.startswith("+") and not line.startswith("+++"):
+            if current_path:
+                ordered[current_path].append((current_line, line[1:]))
+            current_line += 1
+        elif not line.startswith("-"):
+            current_line += 1
+
+    out: list[str] = []
+    for path in files:
+        lines = ordered.get(path) or []
+        if not lines:
+            continue
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        lang = _EXT_TO_FENCE_LANG.get(ext, "")
+        width = max(3, len(str(lines[-1][0])))
+        out.append(f"## {path} (added {len(lines)} lines)")
+        out.append(f"```{lang}")
+        for num, content in lines:
+            out.append(f"{str(num).rjust(width)}: {content}")
+        out.append("```")
+        out.append("")
+
+    return "\n".join(out).rstrip()
+
+
 # ---------------------------------------------------------------------------
 # comments
 # ---------------------------------------------------------------------------

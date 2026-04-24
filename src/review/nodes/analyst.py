@@ -11,10 +11,11 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from src.core.progress import get_or_create_run_dir
 from src.review.agents.analyst import ANALYSTS, build_analyst
 from src.review.prompts import compose_analyst_system
 from src.review.state import ReviewerState
-from src.review.utils import message_repr, state_get
+from src.review.utils import format_diff_for_llm, message_repr, state_get
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +67,13 @@ def _extract_agent_result(result: Any, node: str) -> tuple[list, AIMessage | Non
     return ([], last_message, raw_content)
 
 
-async def analyst_node(agent_key: str, state: ReviewerState) -> dict:
+async def analyst_node(
+    agent_key: str, state: ReviewerState, config: dict | None = None
+) -> dict:
     """Single analyst runner. Dispatches on ANALYSTS[agent_key]."""
     cfg = ANALYSTS[agent_key]
     label = cfg.log_label
+    thread_id = ((config or {}).get("configurable") or {}).get("thread_id") or "default"
 
     from src.core.config import settings
 
@@ -87,24 +91,48 @@ async def analyst_node(agent_key: str, state: ReviewerState) -> dict:
         logger.info("[%s] Injected %d project rules", label, len(guidelines))
 
     diff = state_get(state, "diff", "")
+    diff_format = settings.diff_format
+    if diff_format == "markdown":
+        diff_for_llm = format_diff_for_llm(diff)
+        user_message = f"CHANGED CODE (added lines only):\n\n{diff_for_llm}"
+    else:
+        diff_for_llm = diff
+        user_message = f"DIFF:\n{diff}"
     # Rough token estimate: 1 token ≈ 3.5 chars for English code/prose.
-    est_tokens = (len(system_content) + len(diff)) // 4
+    est_tokens = (len(system_content) + len(user_message)) // 4
     logger.info(
-        "[%s|%s] Sending to LLM: sys_chars=%d diff_chars=%d total_chars=%d ~tokens=%d num_ctx=%s",
+        "[%s|%s] Sending to LLM: fmt=%s sys_chars=%d user_chars=%d total_chars=%d ~tokens=%d num_ctx=%s",
         label,
         provider,
+        diff_format,
         len(system_content),
-        len(diff),
-        len(system_content) + len(diff),
+        len(user_message),
+        len(system_content) + len(user_message),
         est_tokens,
         num_ctx,
     )
     logger.debug("[%s] SYSTEM PROMPT:\n%s", label, system_content)
-    logger.debug("[%s] USER DIFF:\n%s", label, diff)
+    logger.debug("[%s] USER MESSAGE:\n%s", label, user_message)
+
+    # Dump the exact prompt payload next to progress.log so it can be pasted
+    # verbatim into `ollama run` for offline debugging. One file per call —
+    # the iteration counter comes from the critic (retries overwrite previous).
+    try:
+        run_dir = get_or_create_run_dir(thread_id)
+        iteration = int(state_get(state, "iterations", 0) or 0)
+        suffix = "" if iteration == 0 else f"-retry{iteration}"
+        prompt_path = run_dir / f"{agent_key}-prompt{suffix}.txt"
+        prompt_path.write_text(
+            f"=== SYSTEM ===\n{system_content}\n\n=== USER ===\n{user_message}\n",
+            encoding="utf-8",
+        )
+        logger.info("[%s|%s] Prompt dumped to %s", label, provider, prompt_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[%s] Failed to dump prompt: %s", label, exc)
 
     agent = build_analyst(cfg, system_content)
     result = await agent.ainvoke(
-        {"messages": [HumanMessage(content=f"DIFF:\n{diff}")]},
+        {"messages": [HumanMessage(content=user_message)]},
     )
 
     comments, last_message, raw_response = _extract_agent_result(result, label)
@@ -114,12 +142,13 @@ async def analyst_node(agent_key: str, state: ReviewerState) -> dict:
     )
 
     logger.info(
-        "[%s|%s] model=%s sys_chars=%d diff_chars=%d raw_chars=%d structured=%s comments=%d took=%.2fs",
+        "[%s|%s] model=%s fmt=%s sys_chars=%d diff_chars=%d raw_chars=%d structured=%s comments=%d took=%.2fs",
         label,
         provider,
         model_name,
+        diff_format,
         len(system_content),
-        len(diff),
+        len(diff_for_llm),
         len(raw_response or ""),
         structured_ok,
         len(comments),
@@ -138,8 +167,10 @@ async def analyst_node(agent_key: str, state: ReviewerState) -> dict:
         "inputs": {
             "system_content": system_content,
             "system_chars": len(system_content),
-            "diff": diff,
-            "diff_chars": len(diff),
+            "diff_format": diff_format,
+            "diff": diff_for_llm,
+            "diff_chars": len(diff_for_llm),
+            "raw_diff_chars": len(diff),
         },
         "outputs": {
             "messages": [message_repr(m) for m in (messages or [])],
