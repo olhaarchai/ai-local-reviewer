@@ -63,16 +63,23 @@ def _build_llm(cfg: AnalystConfig, model_name: str):
         from langchain_ollama import ChatOllama
 
         timeout = settings.ollama_request_timeout
-        return ChatOllama(
-            model=model_name,
-            temperature=cfg.temperature,
-            format="json",
-            num_ctx=getattr(settings, cfg.num_ctx_setting),
-            num_predict=settings.ollama_num_predict_analyst,
-            keep_alive=settings.ollama_keep_alive,
-            async_client_kwargs={"timeout": timeout},
-            client_kwargs={"timeout": timeout},
-        )
+        kwargs: dict = {
+            "model": model_name,
+            "temperature": cfg.temperature,
+            "format": "json",
+            "num_ctx": getattr(settings, cfg.num_ctx_setting),
+            "num_predict": settings.ollama_num_predict_analyst,
+            "keep_alive": settings.ollama_keep_alive,
+            "async_client_kwargs": {"timeout": timeout},
+            "client_kwargs": {"timeout": timeout},
+        }
+        # qwen3 is a reasoning model — default <think>...</think> prefix is
+        # incompatible with format=json (model burns full num_predict on
+        # thinking, never emits valid JSON). Ollama's API-level `think: false`
+        # disables reasoning cleanly. Other models ignore this field.
+        if "qwen3" in model_name.lower():
+            kwargs["reasoning"] = False
+        return ChatOllama(**kwargs)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
