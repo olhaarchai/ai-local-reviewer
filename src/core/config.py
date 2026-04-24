@@ -86,6 +86,8 @@ class Settings:
     ollama_keep_alive: str
     ollama_num_predict_analyst: int
     diff_format: str
+    max_diff_chars_per_call: int
+    max_chunks_per_agent: int
 
 
 settings = Settings(
@@ -135,4 +137,15 @@ settings = Settings(
     # `markdown` — pre-format per-file with explicit line numbers; ~30-50%
     # less prefill for LLM, removes @@-hunk-math error class. Experimental.
     diff_format=(os.getenv("DIFF_FORMAT") or "raw").strip().lower(),
+    # Char budget for the diff portion of one LLM call. Splits oversized
+    # diffs along file boundaries into multiple sequential calls so each
+    # fits inside num_ctx. With num_ctx=16384, ~40000 chars (~10k tokens)
+    # leaves room for the system prompt and ~4k output tokens.
+    max_diff_chars_per_call=_get_int("MAX_DIFF_CHARS_PER_CALL", 40000),
+    # Per-agent cap on chunk count.
+    #   -1   unlimited (full coverage, default)
+    #    0   disable chunking — always one LLM call (legacy behaviour)
+    #   >0   process at most N chunks; remaining ones logged + dumped
+    #        to <agent>-skipped-chunks.txt for visibility.
+    max_chunks_per_agent=_get_int("MAX_CHUNKS_PER_AGENT", -1),
 )

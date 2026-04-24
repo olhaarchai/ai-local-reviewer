@@ -211,6 +211,47 @@ def format_diff_for_llm(diff: str) -> str:
     return "\n".join(out).rstrip()
 
 
+_FILE_BLOCK_RE = re.compile(r"(?=^## )", re.MULTILINE)
+
+
+def chunk_diff_by_size(diff_md: str, max_chars: int) -> list[str]:
+    """Split per-file markdown diff into chunks each ≤ max_chars.
+
+    File blocks (`## path ...` headers + fenced code) are kept whole — splitting
+    inside a file would lose context for the LLM. A single file larger than
+    max_chars goes into its own chunk (logged as a warning); the LLM/Ollama
+    still truncates inside such an oversized chunk, but other files are not
+    affected by that truncation.
+
+    `max_chars <= 0` returns a single chunk (chunking disabled).
+    """
+    if max_chars <= 0 or len(diff_md) <= max_chars:
+        return [diff_md] if diff_md else []
+
+    blocks = [b for b in _FILE_BLOCK_RE.split(diff_md) if b.strip()]
+    if not blocks:
+        return [diff_md]
+
+    chunks: list[list[str]] = [[]]
+    size = 0
+    for block in blocks:
+        block_len = len(block)
+        if block_len > max_chars:
+            logger.warning(
+                "[chunk_diff] File block of %d chars exceeds max_chars=%d "
+                "— sending alone (Ollama may truncate inside)",
+                block_len,
+                max_chars,
+            )
+        if size + block_len > max_chars and chunks[-1]:
+            chunks.append([])
+            size = 0
+        chunks[-1].append(block)
+        size += block_len
+
+    return ["".join(c) for c in chunks if c]
+
+
 # ---------------------------------------------------------------------------
 # comments
 # ---------------------------------------------------------------------------
