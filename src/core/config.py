@@ -58,6 +58,8 @@ class Settings:
     ollama_base_url: str | None
     ollama_request_timeout: float
 
+    mlx_base_url: str
+
     checkpoint_postgres_dsn: str | None
     checkpoint_sqlite_path: str
 
@@ -103,6 +105,9 @@ settings = Settings(
     openai_api_key=os.getenv("OPENAI_API_KEY"),
     ollama_base_url=os.getenv("OLLAMA_BASE_URL"),
     ollama_request_timeout=_get_float("OLLAMA_REQUEST_TIMEOUT", 300.0),
+    # mlx_lm.server exposes an OpenAI-compatible /v1 endpoint. Default port
+    # is 8080. Used only when TYPE_AGENTS=mlx.
+    mlx_base_url=os.getenv("MLX_BASE_URL", "http://localhost:8080/v1"),
     checkpoint_postgres_dsn=os.getenv("CHECKPOINT_POSTGRES_DSN"),
     checkpoint_sqlite_path=os.getenv(
         "CHECKPOINT_SQLITE_PATH", ".data/reviewer_checkpoints.sqlite"

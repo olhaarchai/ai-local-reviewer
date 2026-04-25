@@ -117,8 +117,26 @@ def _build_llm(cfg: AnalystConfig, model_name: str):
             temperature=cfg.temperature,
             api_key=settings.openai_api_key,
         )
+    if provider == "mlx":
+        # mlx_lm.server exposes an OpenAI-compatible /v1 endpoint. We reuse
+        # ChatOpenAI with a local base_url; api_key is required by the SDK
+        # but not validated server-side.
+        #
+        # max_tokens is critical: mlx_lm.server has no default cap, so a
+        # reasoning model (qwen3 thinking) at temperature=0.0 can loop
+        # indefinitely on `<think>...</think>` blocks. 4096 is enough for
+        # ~15 structured comments and bounds worst-case latency.
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=model_name,
+            temperature=cfg.temperature,
+            base_url=settings.mlx_base_url,
+            api_key="not-needed",
+            max_tokens=4096,
+        )
     raise ValueError(
-        f"Unknown TYPE_AGENTS={provider!r} (expected local|anthropic|gemini|openai)"
+        f"Unknown TYPE_AGENTS={provider!r} (expected local|anthropic|gemini|openai|mlx)"
     )
 
 
@@ -139,6 +157,15 @@ def build_analyst(cfg: AnalystConfig, system_prompt: str):
         raise ValueError(f"{cfg.model_setting.upper()} is not set")
 
     provider = settings.type_agents or "local"
+
+    # Qwen3 on mlx_lm.server: there's no API-level `reasoning=False` toggle
+    # like Ollama has. The model defaults to <think>...</think> reasoning,
+    # which at temperature=0.0 can loop deterministically and burn the
+    # entire token budget without emitting structured output. Qwen3 honours
+    # an in-prompt `/no_think` directive to disable reasoning cleanly.
+    if provider == "mlx" and "qwen3" in model_name.lower():
+        system_prompt = f"{system_prompt}\n\n/no_think"
+
     llm = _build_llm(cfg, model_name)
     agent_kwargs: dict = {
         "model": llm,
