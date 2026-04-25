@@ -34,7 +34,7 @@ class GitHubClient:
             "Accept": "application/vnd.github.v3+json",
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             url = f"{self.base_url}/app/installations/{self.installation_id}/access_tokens"
             response = await client.post(url, headers=headers)
             response.raise_for_status()
@@ -47,7 +47,8 @@ class GitHubClient:
             "Accept": "application/vnd.github.v3.diff",
         }
 
-        async with httpx.AsyncClient() as client:
+        # Large PRs (e.g. 200k-char diff) can take >5s default httpx read.
+        async with httpx.AsyncClient(timeout=60.0) as client:
             url = f"{self.base_url}/repos/{repo_name}/pulls/{pr_number}"
             response = await client.get(url, headers=headers)
             response.raise_for_status()
@@ -89,7 +90,12 @@ class GitHubClient:
             pr_number,
         )
 
-        async with httpx.AsyncClient(headers=headers) as client:
+        # GitHub PR-review POST can take 10-30s for large reviews (many inline
+        # comments + summary body). httpx default 5s ReadTimeout is too tight.
+        async with httpx.AsyncClient(
+            headers=headers,
+            timeout=httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0),
+        ) as client:
             response = await client.post(
                 url,
                 json={
