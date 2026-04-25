@@ -60,9 +60,16 @@ def _build_llm(cfg: AnalystConfig, model_name: str):
 
     provider = settings.type_agents or "local"
     if provider == "local":
+        import httpx
         from langchain_ollama import ChatOllama
 
-        timeout = settings.ollama_request_timeout
+        # Ollama serialises inference: when both analysts run in parallel,
+        # one queues behind the other. With chunked diffs (3+ chunks/agent),
+        # the second-in-queue request can wait minutes before any byte
+        # arrives — a single-float timeout (read=300s) trips on that idle
+        # gap. read=None waits indefinitely for the local server; connect/
+        # write/pool stay bounded so genuine network failures still fail fast.
+        client_timeout = httpx.Timeout(connect=30.0, read=None, write=60.0, pool=30.0)
         kwargs: dict = {
             "model": model_name,
             "temperature": cfg.temperature,
@@ -70,8 +77,8 @@ def _build_llm(cfg: AnalystConfig, model_name: str):
             "num_ctx": getattr(settings, cfg.num_ctx_setting),
             "num_predict": settings.ollama_num_predict_analyst,
             "keep_alive": settings.ollama_keep_alive,
-            "async_client_kwargs": {"timeout": timeout},
-            "client_kwargs": {"timeout": timeout},
+            "async_client_kwargs": {"timeout": client_timeout},
+            "client_kwargs": {"timeout": client_timeout},
         }
         # qwen3 is a reasoning model — default <think>...</think> prefix is
         # incompatible with format=json (model burns full num_predict on

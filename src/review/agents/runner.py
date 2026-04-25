@@ -53,6 +53,26 @@ class ChunkResult:
     messages: list
 
 
+def _content_to_str(content: Any) -> str:
+    """Normalise an AIMessage.content to a plain string.
+
+    Anthropic returns a list of content blocks (`[{"type": "text", "text": ...}]`);
+    Ollama and OpenAI return a plain string. Concatenate text blocks; ignore
+    tool_use / image / other non-text blocks.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts)
+    return str(content) if content else ""
+
+
 def _parse_json_response(content: str, node: str) -> list:
     clean = content.replace("```json", "").replace("```", "").strip()
     parsed = json.loads(clean)
@@ -81,7 +101,7 @@ def _extract_agent_result(
     if last_message is None:
         return ([], None, "", messages)
 
-    raw_content = getattr(last_message, "content", "")
+    raw_content = _content_to_str(getattr(last_message, "content", ""))
     structured = result.get("structured_response")
     if structured is not None:
         if isinstance(structured, dict):
