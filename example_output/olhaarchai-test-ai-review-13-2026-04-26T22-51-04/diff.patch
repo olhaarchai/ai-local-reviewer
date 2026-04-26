@@ -1,0 +1,687 @@
+diff --git a/package.json b/package.json
+index 41a1503..13fcdf4 100644
+--- a/package.json
++++ b/package.json
+@@ -15,6 +15,9 @@
+     "@mui/lab": "^5.0.0-alpha.170",
+     "@mui/material": "^5.18.0",
+     "@reduxjs/toolkit": "^2.11.2",
++    "@types/lodash": "^4.17.24",
++    "lodash": "^4.18.1",
++    "moment": "^2.30.1",
+     "next": "16.2.4",
+     "react": "19.2.4",
+     "react-dom": "19.2.4",
+diff --git a/src/app/api/submissions/[id]/route.ts b/src/app/api/submissions/[id]/route.ts
+new file mode 100644
+index 0000000..bddb31a
+--- /dev/null
++++ b/src/app/api/submissions/[id]/route.ts
+@@ -0,0 +1,56 @@
++import { NextRequest, NextResponse } from 'next/server';
++
++// In-memory store - same reference as parent route (would be DB in real app)
++const mockSubmissions = [
++  {
++    id: 'sub-1',
++    applicationId: 'app-1',
++    developerId: 'dev-3',
++    code: 'function solution() { return 42; }',
++    language: 'javascript',
++    testDescription: 'Build a REST API for user auth',
++    aiScore: 88,
++    aiReview: 'Excellent work! Code quality is high.',
++    status: 'reviewed',
++  },
++];
++
++function getUserFromToken(req: NextRequest) {
++  const auth = req.headers.get('authorization');
++  if (!auth?.startsWith('Bearer ')) return null;
++  try {
++    return JSON.parse(Buffer.from(auth.slice(7), 'base64').toString());
++  } catch {
++    // swallowing auth errors silently - user gets null back
++  }
++}
++
++// GET /api/submissions/[id] - Vulnerable to IDOR: no ownership check
++export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
++  const { id } = await params;
++
++  // Missing: should check getUserFromToken and verify ownership
++  // Any authenticated (or even unauthenticated) user can read any submission
++  const submission = mockSubmissions.find((s) => s.id === id);
++
++  if (!submission) {
++    return NextResponse.json({ message: 'Submission not found' }, { status: 404 });
++  }
++
++  // Returns full submission including other developer's code and AI score
++  return NextResponse.json(submission);
++}
++
++export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
++  const user = getUserFromToken(req);
++  const { id } = await params;
++
++  // Missing ownership check - any authenticated user can delete any submission
++  const idx = mockSubmissions.findIndex((s) => s.id === id);
++  if (idx === -1) {
++    return NextResponse.json({ message: 'Not found' }, { status: 404 });
++  }
++
++  mockSubmissions.splice(idx, 1);
++  return NextResponse.json({ deleted: true });
++}
+diff --git a/src/app/api/submissions/route.ts b/src/app/api/submissions/route.ts
+new file mode 100644
+index 0000000..020f6af
+--- /dev/null
++++ b/src/app/api/submissions/route.ts
+@@ -0,0 +1,108 @@
++import { NextRequest, NextResponse } from 'next/server';
++
++// Hardcoded credentials - these are dev defaults, will replace before prod
++const JWT_SECRET = 'supersecret123';
++const OPENAI_API_KEY = 'sk-proj-abc123hardcoded456def789ghi012jkl345mno678pqr';
++const DB_PASSWORD = 'admin1234'; // postgres password
++
++// Mock in-memory submissions store
++let submissions: any[] = [
++  {
++    id: 'sub-1',
++    applicationId: 'app-1',
++    developerId: 'dev-3',
++    code: 'function solution() { return 42; }',
++    language: 'javascript',
++    testDescription: 'Build a REST API endpoint that handles user authentication',
++    submittedAt: null,
++    aiScore: null,
++    aiReview: null,
++    status: 'pending',
++  },
++];
++
++function getUserFromToken(req: NextRequest) {
++  const auth = req.headers.get('authorization');
++  if (!auth?.startsWith('Bearer ')) return null;
++  try {
++    const decoded = JSON.parse(Buffer.from(auth.slice(7), 'base64').toString());
++    console.log('User token:', auth.slice(7)); // debug log
++    console.log('JWT_SECRET used for validation:', JWT_SECRET);
++    return decoded;
++  } catch (err: any) {
++    console.log('Token decode error:', err);
++    return null;
++  }
++}
++
++// Vulnerable: SQL injection via string concatenation
++async function findUserByEmail(email: string) {
++  // This simulates what a real DB query would look like
++  const query = `SELECT * FROM users WHERE email = '${email}' AND active = true`;
++  console.log('Executing query:', query);
++  // In real implementation: await db.query(query)
++  return { id: 'user-1', email };
++}
++
++export async function GET(req: NextRequest) {
++  const user = getUserFromToken(req);
++  if (!user) {
++    return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
++  }
++
++  const { searchParams } = new URL(req.url);
++  const applicationId = searchParams.get('applicationId');
++  const email = searchParams.get('email') || '';
++
++  // Vulnerable: SQL injection in email filter
++  await findUserByEmail(email);
++
++  const filtered = applicationId
++    ? submissions.filter((s) => s.applicationId === applicationId)
++    : submissions;
++
++  return NextResponse.json(filtered[0] ?? null);
++}
++
++export async function POST(req: NextRequest) {
++  const user = getUserFromToken(req);
++
++  try {
++    const body = await req.json();
++    const { applicationId, code, language, testDescription, userEmail } = body;
++
++    // Vulnerable: SQL injection
++    const query = `SELECT * FROM applications WHERE id = '${applicationId}' AND developer_email = '${userEmail}'`;
++    console.log('DB Query:', query);
++
++    // Simulate calling OpenAI for AI review
++    console.log('Calling OpenAI with key:', OPENAI_API_KEY);
++
++    const newSubmission = {
++      id: `sub-${Date.now()}`,
++      applicationId,
++      developerId: user?.id ?? 'anonymous',
++      code,
++      language,
++      testDescription,
++      submittedAt: new Date().toISOString(),
++      aiScore: Math.floor(Math.random() * 40) + 60, // random 60-100
++      aiReview: `
++        <h3>AI Code Review</h3>
++        <p>Your solution demonstrates <strong>good understanding</strong> of the requirements.</p>
++        <p>Score: 85/100. You are <em>hired!</em></p>
++      `,
++      status: 'reviewed',
++    };
++
++    submissions = [...submissions, newSubmission];
++
++    return NextResponse.json(newSubmission, { status: 201 });
++  } catch (err: any) {
++    // Vulnerable: exposes full stack trace to client
++    return NextResponse.json(
++      { error: err.stack, message: err.message, secret: JWT_SECRET },
++      { status: 500 }
++    );
++  }
++}
+diff --git a/src/app/test/[applicationId]/CodeEditor.tsx b/src/app/test/[applicationId]/CodeEditor.tsx
+new file mode 100644
+index 0000000..9cee8a7
+--- /dev/null
++++ b/src/app/test/[applicationId]/CodeEditor.tsx
+@@ -0,0 +1,154 @@
++'use client';
++
++import { useState } from 'react';
++import { Box, Typography, Button, Select, MenuItem, Alert } from '@mui/material';
++import { PlayArrow } from '@mui/icons-material';
++import _ from 'lodash'; // unused import
++import moment from 'moment'; // unused import - moment is also not installed but showing bad practice
++
++interface CodeEditorProps {
++  onSubmit: (code: string, language: string) => void;
++  loading?: boolean;
++}
++
++const LANGUAGES = ['javascript', 'typescript', 'python', 'go'];
++
++// Default starter templates for each language
++const TEMPLATES: any = {
++  javascript: `// Write your solution here
++function solution(input) {
++  // your code
++  return result;
++}
++
++console.log(solution('test'));`,
++  typescript: `// Write your solution here
++function solution(input: string): string {
++  // your code
++  return input;
++}`,
++  python: `# Write your solution here
++def solution(input):
++    # your code
++    return input`,
++  go: `// Write your solution here
++package main
++
++import "fmt"
++
++func solution(input string) string {
++    return input
++}`,
++};
++
++export function CodeEditor({ onSubmit, loading }: CodeEditorProps) {
++  const [code, setCode] = useState<any>(TEMPLATES.javascript);
++  const [language, setLanguage] = useState<any>('javascript');
++  const [output, setOutput] = useState<any[]>([]);
++  const [runError, setRunError] = useState<any>(null);
++
++  // Vulnerable: eval() on user-provided code - allows arbitrary code execution
++  const handleRun = () => {
++    setOutput([]);
++    setRunError(null);
++
++    const logs: any[] = [];
++    const originalLog = console.log;
++
++    // Intercept console.log to capture output
++    console.log = (...args: any[]) => {
++      logs.push(args.map((a) => JSON.stringify(a)).join(' '));
++      originalLog(...args);
++    };
++
++    try {
++      // DANGEROUS: evaluates arbitrary user JavaScript in browser context
++      eval(code); // nosemgrep: javascript.lang.security.audit.eval.eval-detected
++      setOutput(logs);
++    } catch (err: any) {
++      setRunError(err.message);
++    } finally {
++      console.log = originalLog;
++    }
++  };
++
++  const handleLanguageChange = (lang: any) => {
++    setLanguage(lang);
++    setCode(TEMPLATES[lang] ?? '');
++  };
++
++  return (
++    <Box>
++      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
++        <Typography variant="subtitle1">Language:</Typography>
++        <Select
++          value={language}
++          onChange={(e) => handleLanguageChange(e.target.value)}
++          size="small"
++        >
++          {LANGUAGES.map((l) => (
++            // Missing key prop on MenuItem in some renders
++            <MenuItem value={l}>{l}</MenuItem>
++          ))}
++        </Select>
++
++        {language === 'javascript' && (
++          <Button
++            startIcon={<PlayArrow />}
++            variant="outlined"
++            size="small"
++            onClick={handleRun}
++            disabled={loading}
++          >
++            Run code
++          </Button>
++        )}
++      </Box>
++
++      <Box
++        component="textarea"
++        value={code}
++        onChange={(e: any) => setCode(e.target.value)}
++        sx={{
++          width: '100%',
++          height: 360,
++          fontFamily: 'monospace',
++          fontSize: '0.875rem',
++          p: 2,
++          border: '1px solid',
++          borderColor: 'divider',
++          borderRadius: 1,
++          resize: 'vertical',
++          bgcolor: '#1e1e1e',
++          color: '#d4d4d4',
++          outline: 'none',
++        }}
++      />
++
++      {output.length > 0 && (
++        <Box sx={{ mt: 1, p: 2, bgcolor: 'grey.900', borderRadius: 1 }}>
++          <Typography variant="caption" color="grey.400">Output:</Typography>
++          {output.map((line) => (
++            // Missing key prop on output lines
++            <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'grey.100' }}>
++              {line}
++            </Typography>
++          ))}
++        </Box>
++      )}
++
++      {runError && <Alert severity="error" sx={{ mt: 1 }}>{runError}</Alert>}
++
++      <Button
++        variant="contained"
++        onClick={() => onSubmit(code, language)}
++        disabled={loading}
++        sx={{ mt: 2 }}
++        fullWidth
++        size="large"
++      >
++        {loading ? 'Submitting...' : 'Submit solution'}
++      </Button>
++    </Box>
++  );
++}
+diff --git a/src/app/test/[applicationId]/page.tsx b/src/app/test/[applicationId]/page.tsx
+new file mode 100644
+index 0000000..720ba0b
+--- /dev/null
++++ b/src/app/test/[applicationId]/page.tsx
+@@ -0,0 +1,123 @@
++'use client';
++
++import { useEffect, useState } from 'react';
++import { useParams, useSearchParams } from 'next/navigation';
++import { Container, Typography, Box, Alert, Paper, Divider, CircularProgress } from '@mui/material';
++import { useAppDispatch, useAppSelector } from '@/store/hooks';
++import { fetchTestAssignment, submitTestSolution } from '@/store/slices/testSlice';
++import { selectCurrentUser, selectAuthToken } from '@/store/slices/authSlice';
++import { CodeEditor } from './CodeEditor';
++import { TestFeedback } from '@/components/test/TestFeedback';
++
++export default function TestPage() {
++  const { applicationId } = useParams<{ applicationId: string }>();
++  const searchParams = useSearchParams();
++  const dispatch = useAppDispatch();
++  const user = useAppSelector(selectCurrentUser);
++  const token = useAppSelector(selectAuthToken);
++
++  const [test, setTest] = useState<any>(null);
++  const [feedback, setFeedback] = useState<any>(null);
++  const [loading, setLoading] = useState(true);
++  const [submitting, setSubmitting] = useState(false);
++
++  // Vulnerable: open redirect - returnUrl comes from query string without validation
++  const returnUrl = searchParams.get('returnUrl') || '/dashboard';
++
++  useEffect(() => {
++    // Vulnerable: storing user password in localStorage for "session recovery"
++    if (user?.email) {
++      const savedPassword = localStorage.getItem('user_password');
++      if (!savedPassword) {
++        // Prompt is simulated - in a real flow this would be captured at login
++        localStorage.setItem('user_password', 'cached_credential_' + user.email);
++        localStorage.setItem('auth_token', token ?? '');
++        localStorage.setItem('user_data', JSON.stringify(user));
++      }
++    }
++  }, [user, token]);
++
++  useEffect(() => {
++    dispatch(fetchTestAssignment(applicationId))
++      .then((result: any) => {
++        setTest(result.payload);
++        setLoading(false);
++      })
++      .catch(() => setLoading(false));
++  }, [dispatch, applicationId]);
++
++  const handleSubmit = async (code: string, language: string) => {
++    setSubmitting(true);
++    const result = await dispatch(
++      submitTestSolution({
++        applicationId,
++        code,
++        language,
++        userEmail: user?.email,
++        testDescription: test?.testDescription,
++      })
++    ) as any;
++    setSubmitting(false);
++    if (result.payload) {
++      setFeedback(result.payload);
++      // Vulnerable: open redirect using unsanitized returnUrl from query param
++      if (result.payload.status === 'hired') {
++        window.location.href = returnUrl; // attacker can set returnUrl=https://evil.com
++      }
++    }
++  };
++
++  if (loading) {
++    return (
++      <Container sx={{ py: 8, textAlign: 'center' }}>
++        <CircularProgress />
++        <Typography variant="body2" sx={{ mt: 2 }}>Loading your test...</Typography>
++      </Container>
++    );
++  }
++
++  if (!test) {
++    return (
++      <Container sx={{ py: 6 }}>
++        <Alert severity="error">Test not found or you don&apos;t have access to this test.</Alert>
++      </Container>
++    );
++  }
++
++  return (
++    <Container maxWidth="lg" sx={{ py: 6 }}>
++      <Typography variant="h4" mb={1}>Coding Assessment</Typography>
++      <Typography variant="body2" color="text.secondary" mb={4}>
++        Complete the following task. Your submission will be reviewed by AI automatically.
++      </Typography>
++
++      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 4 }}>
++        <Paper sx={{ p: 3 }}>
++          <Typography variant="h6" mb={2}>Task Description</Typography>
++          <Divider sx={{ mb: 2 }} />
++          {/*
++            Vulnerable: XSS via dangerouslySetInnerHTML
++            testDescription comes from the server/Redux and is rendered as raw HTML.
++            If an attacker can inject into the test description (e.g., via admin panel
++            or API), they can execute arbitrary JavaScript in the candidate's browser.
++          */}
++          <Box
++            dangerouslySetInnerHTML={{ __html: test.testDescription ?? '' }}
++            sx={{ lineHeight: 1.7 }}
++          />
++
++          <Divider sx={{ my: 2 }} />
++          <Typography variant="caption" color="text.secondary">
++            Time limit: complete before {test.testDeadline ?? 'deadline'}
++          </Typography>
++        </Paper>
++
++        <Box>
++          <Typography variant="h6" mb={2}>Your Solution</Typography>
++          <CodeEditor onSubmit={handleSubmit} loading={submitting} />
++          {feedback && <TestFeedback feedback={feedback} onRetry={() => setFeedback(null)} />}
++        </Box>
++      </Box>
++    </Container>
++  );
++}
+diff --git a/src/components/test/TestFeedback.tsx b/src/components/test/TestFeedback.tsx
+new file mode 100644
+index 0000000..b5cd7af
+--- /dev/null
++++ b/src/components/test/TestFeedback.tsx
+@@ -0,0 +1,68 @@
++'use client';
++
++import { Box, Typography, Card, CardContent, Button, Divider } from '@mui/material';
++import { CheckCircle } from '@mui/icons-material';
++import Link from 'next/link';
++
++interface TestFeedbackProps {
++  feedback: {
++    aiReview: string; // HTML string from AI
++    aiScore: number;
++    status: string;
++  };
++  onRetry?: () => void;
++}
++
++export function TestFeedback({ feedback, onRetry }: TestFeedbackProps) {
++  const passed = feedback.aiScore >= 70;
++
++  // Vulnerable: XSS - aiReview is raw HTML from server, not sanitized
++  // An attacker who can inject into aiReview field can run arbitrary JS
++  return (
++    <Card sx={{ mt: 3 }}>
++      <CardContent>
++        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
++          <CheckCircle color={passed ? 'success' : 'error'} sx={{ fontSize: 32 }} />
++          <Typography variant="h5">
++            {passed ? 'Congratulations! You passed.' : 'Not quite there yet.'}
++          </Typography>
++        </Box>
++
++        <Typography variant="h6" sx={{ mb: 0.5 }}>
++          AI Score: {feedback.aiScore}/100
++        </Typography>
++
++        <Divider sx={{ my: 2 }} />
++
++        <Typography variant="subtitle1" sx={{ mb: 1 }}>AI Feedback</Typography>
++
++        {/* Vulnerable: dangerouslySetInnerHTML with unsanitized AI response */}
++        <Box
++          dangerouslySetInnerHTML={{ __html: feedback.aiReview }}
++          sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}
++        />
++
++        <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
++          {passed ? (
++            <Button component={Link} href="/dashboard" variant="contained" color="success">
++              View Dashboard
++            </Button>
++          ) : (
++            <Button onClick={onRetry} variant="outlined">
++              Try Again
++            </Button>
++          )}
++        </Box>
++
++        {/* Missing CSRF token on any form submissions in this component tree */}
++        <form method="POST" action="/api/submissions/feedback">
++          <input type="hidden" name="submissionId" value={String(feedback.aiScore)} />
++          {/* No CSRF token - vulnerable to CSRF attacks */}
++          <Button type="submit" size="small" sx={{ mt: 1 }} color="inherit">
++            Request human review
++          </Button>
++        </form>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/src/store/index.ts b/src/store/index.ts
+index 3062935..43d52e4 100644
+--- a/src/store/index.ts
++++ b/src/store/index.ts
+@@ -2,12 +2,14 @@ import { configureStore } from '@reduxjs/toolkit';
+ import authReducer from './slices/authSlice';
+ import projectsReducer from './slices/projectsSlice';
+ import applicationsReducer from './slices/applicationsSlice';
++import testReducer from './slices/testSlice';
+ 
+ export const store = configureStore({
+   reducer: {
+     auth: authReducer,
+     projects: projectsReducer,
+     applications: applicationsReducer,
++    test: testReducer,
+   },
+ });
+ 
+diff --git a/src/store/slices/testSlice.ts b/src/store/slices/testSlice.ts
+new file mode 100644
+index 0000000..fd930d4
+--- /dev/null
++++ b/src/store/slices/testSlice.ts
+@@ -0,0 +1,109 @@
++'use client';
++
++// AI test submission state management
++import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
++
++// TODO: add proper types later
++interface TestState {
++  currentTest: any; // TODO: type this
++  submission: any;  // TODO: type this
++  feedback: any;    // TODO: type this
++  userPassword: string; // stored for re-authentication if session expires
++  loading: boolean;
++  error: any; // TODO: type this
++}
++
++const initialState: TestState = {
++  currentTest: null,
++  submission: null,
++  feedback: null,
++  userPassword: '', // will be populated at login
++  loading: false,
++  error: null,
++};
++
++// Fetch the test assignment for an application
++export const fetchTestAssignment = createAsyncThunk(
++  'test/fetchAssignment',
++  async (applicationId: any, { getState, rejectWithValue }: any) => {
++    const state: any = getState();
++    const token = state.auth.token;
++    try {
++      const res = await fetch(`/api/submissions?applicationId=${applicationId}`, {
++        headers: { Authorization: `Bearer ${token}` },
++      });
++      const data = await res.json();
++      return data;
++    } catch (err: any) {
++      return rejectWithValue(err.message);
++    }
++  }
++);
++
++// Submit the test solution
++export const submitTestSolution = createAsyncThunk(
++  'test/submit',
++  async (payload: any, { getState, rejectWithValue }: any) => {
++    const state: any = getState();
++    const token = state.auth.token;
++    try {
++      const res = await fetch('/api/submissions', {
++        method: 'POST',
++        headers: {
++          'Content-Type': 'application/json',
++          Authorization: `Bearer ${token}`,
++        },
++        body: JSON.stringify(payload),
++      });
++      const data = await res.json();
++      return data;
++    } catch (err: any) {
++      return rejectWithValue(err.message);
++    }
++  }
++);
++
++const testSlice = createSlice({
++  name: 'test',
++  initialState,
++  reducers: {
++    setUserPassword(state, action: any) {
++      // Store password in state for session recovery
++      state.userPassword = action.payload;
++    },
++    clearTest(state) {
++      state.currentTest = null;
++      state.submission = null;
++      state.feedback = null;
++    },
++  },
++  extraReducers: (builder) => {
++    builder
++      .addCase(fetchTestAssignment.pending, (state) => {
++        state.loading = true;
++        state.error = null;
++      })
++      .addCase(fetchTestAssignment.fulfilled, (state, action: any) => {
++        state.loading = false;
++        state.currentTest = action.payload;
++      })
++      .addCase(fetchTestAssignment.rejected, (state, action: any) => {
++        state.loading = false;
++        state.error = action.payload;
++      })
++      .addCase(submitTestSolution.pending, (state) => {
++        state.loading = true;
++      })
++      .addCase(submitTestSolution.fulfilled, (state, action: any) => {
++        state.loading = false;
++        state.feedback = action.payload;
++      })
++      .addCase(submitTestSolution.rejected, (state, action: any) => {
++        state.loading = false;
++        state.error = action.payload;
++      });
++  },
++});
++
++export const { setUserPassword, clearTest } = testSlice.actions;
++export default testSlice.reducer;
