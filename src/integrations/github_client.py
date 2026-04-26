@@ -34,7 +34,7 @@ class GitHubClient:
             "Accept": "application/vnd.github.v3+json",
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             url = f"{self.base_url}/app/installations/{self.installation_id}/access_tokens"
             response = await client.post(url, headers=headers)
             response.raise_for_status()
@@ -47,7 +47,8 @@ class GitHubClient:
             "Accept": "application/vnd.github.v3.diff",
         }
 
-        async with httpx.AsyncClient() as client:
+        # Large PRs (e.g. 200k-char diff) can take >5s default httpx read.
+        async with httpx.AsyncClient(timeout=60.0) as client:
             url = f"{self.base_url}/repos/{repo_name}/pulls/{pr_number}"
             response = await client.get(url, headers=headers)
             response.raise_for_status()
@@ -82,7 +83,19 @@ class GitHubClient:
             if c.get("path") and c.get("line") and c.get("body")
         ]
 
-        async with httpx.AsyncClient(headers=headers) as client:
+        logger.info(
+            "[github_client] POST /reviews — %d inline comment(s) for %s#%d",
+            len(github_comments),
+            repo_name,
+            pr_number,
+        )
+
+        # GitHub PR-review POST can take 10-30s for large reviews (many inline
+        # comments + summary body). httpx default 5s ReadTimeout is too tight.
+        async with httpx.AsyncClient(
+            headers=headers,
+            timeout=httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0),
+        ) as client:
             response = await client.post(
                 url,
                 json={
@@ -93,10 +106,14 @@ class GitHubClient:
             )
 
             if response.status_code == 422:
+                errors = response.json().get("errors") or []
                 logger.warning(
-                    "[github_client] 422 on inline comments (%s), falling back to summary-only",
-                    response.json().get("errors"),
+                    "[github_client] GitHub rejected inline comments (422) — "
+                    "%d error(s). Falling back to summary-only.",
+                    len(errors),
                 )
+                for err in errors:
+                    logger.warning("[github_client]   rejected: %s", err)
                 # Append only missing findings to avoid duplicates.
                 missing_lines = []
                 for c in github_comments:
@@ -104,6 +121,10 @@ class GitHubClient:
                     if marker in body:
                         continue
                     missing_lines.append(f"- `{marker}` — {c['body']}")
+                logger.info(
+                    "[github_client] fallback body: %d finding(s) appended",
+                    len(missing_lines),
+                )
                 if missing_lines:
                     issues_md = "\n".join(missing_lines)
                     fallback_body = f"{body}\n\n---\n**Findings (inline comments unavailable):**\n{issues_md}"

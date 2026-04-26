@@ -103,22 +103,21 @@ GITHUB_WEBHOOK_SECRET=your_webhook_secret         # Webhook secret
 GITHUB_PRIVATE_KEY_PATH=./oh-local-reviewer-ai.pem  # Path to .pem file
 GITHUB_BOT_NAME=your-bot-name                     # Bot login (without [bot] suffix)
 
-OLLAMA_MODEL_SECURITY=qwen2.5:7b                  # Security analyst model (tool-capable)
-OLLAMA_MODEL_STYLE=qwen2.5:3b                     # Style analyst model (tool-capable)
-OLLAMA_MODEL_FAST=llama3.2:1b                     # Summarizer model
-OLLAMA_BASE_URL=http://localhost:11434
+TYPE_AGENTS=local                                 # local|anthropic|gemini|openai
+MODEL_SECURITY=qwen2.5:7b                         # Security analyst model
+MODEL_STYLE=qwen2.5:3b                            # Style analyst model
+# ANTHROPIC_API_KEY=...                           # needed when TYPE_AGENTS=anthropic
+# GOOGLE_API_KEY=...                              # needed when TYPE_AGENTS=gemini
+# OPENAI_API_KEY=...                              # needed when TYPE_AGENTS=openai
+OLLAMA_BASE_URL=http://localhost:11434            # used only when TYPE_AGENTS=local
 OLLAMA_REQUEST_TIMEOUT=300
-SUMMARIZER_USE_LLM=false
 
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
 CHECKPOINT_SQLITE_PATH=.data/reviewer_checkpoints.sqlite
 # CHECKPOINT_POSTGRES_DSN=postgresql+asyncpg://...
 
-WEB_SEARCH_MAX_RESULTS=5
-READ_URL_MAX_CHARS=5000
 MAX_CRITIC_ITERATIONS=3
-AGENT_RECURSION_LIMIT=2
 ENABLED_AGENTS=security,style
 
 LOG_LEVEL=INFO
@@ -151,3 +150,36 @@ Copy the HTTPS URL from ngrok and set it in your GitHub App settings:
 4. The LangGraph pipeline runs: filter → retriever → security/style analysts → critic loop → summarizer.
 5. Optional HITL pause allows editing/approval before final summary.
 6. The bot posts inline comments and a summary review back to GitHub.
+
+---
+
+## Pipeline walkthrough
+
+The LangGraph pipeline runs nine nodes per PR. Descriptions are the single source of truth in [`src/core/pipeline_doc.py`](./src/core/pipeline_doc.py).
+
+| Node | Purpose |
+|------|---------|
+| **filter** | strips lockfiles, binaries and noise from the diff |
+| **retriever** | pulls project rules from Milvus + BM25 by detected stack |
+| **linter** | runs ruff on Python added lines as deterministic pre-findings |
+| **security_analyst** | LLM scan for OWASP-class vulnerabilities |
+| **style_analyst** | LLM scan for type safety, dead code, framework idioms |
+| **critic** | applies G1-G4 guards + rule-ID membership to LLM comments |
+| **retry** | clears analyst state for another pass on critic feedback |
+| **hitl_gate** | pauses for human approve / retry decision |
+| **summarizer** | deterministic executive summary from surviving comments |
+
+Read [`INSTRUCTION.md`](./INSTRUCTION.md) for the full narrative with rationale per design choice.
+
+---
+
+## Reading a run's output
+
+Every webhook trigger creates one folder under `output/processes/<repo>-<pr>-<timestamp>/`:
+
+- `progress.log` — stage timeline with `ENTER` / `EXIT` events, descriptions, and per-node metrics. Read this first.
+- `review.md` — full transcript: RAG breakdown, analyst prompts, raw LLM output, critic counts, surviving comments.
+- `diff.patch` — exact diff the analysts saw, after filtering.
+- `<agent>-prompt.txt` — system + user message for each LLM call. Paste into `ollama run` to reproduce.
+
+See [`INSTRUCTION.md`](./INSTRUCTION.md#how-to-read-a-run) for the full guide.

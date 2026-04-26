@@ -48,13 +48,17 @@ class Settings:
     github_private_key_path: str | None
     github_bot_name: str | None
 
-    ollama_model_security: str | None
-    ollama_model_style: str | None
-    ollama_model_fast: str | None
+    type_agents: str
+    model_security: str | None
+    model_style: str | None
+    anthropic_api_key: str | None
+    google_api_key: str | None
+    openai_api_key: str | None
+
     ollama_base_url: str | None
     ollama_request_timeout: float
 
-    summarizer_use_llm: bool
+    mlx_base_url: str
 
     checkpoint_postgres_dsn: str | None
     checkpoint_sqlite_path: str
@@ -64,11 +68,7 @@ class Settings:
     milvus_rules_per_category: int
     milvus_score_threshold: float
 
-    web_search_max_results: int
-    read_url_max_chars: int
-
     max_critic_iterations: int
-    agent_recursion_limit: int
 
     enabled_agents: list[str]
 
@@ -85,10 +85,11 @@ class Settings:
     output_dir: str
     ollama_num_ctx_security: int
     ollama_num_ctx_style: int
-    ollama_num_ctx_fast: int
     ollama_keep_alive: str
     ollama_num_predict_analyst: int
-    ollama_num_predict_fast: int
+    diff_format: str
+    max_diff_chars_per_call: int
+    max_chunks_per_agent: int
 
 
 settings = Settings(
@@ -96,12 +97,17 @@ settings = Settings(
     github_app_id=os.getenv("GITHUB_APP_ID"),
     github_private_key_path=os.getenv("GITHUB_PRIVATE_KEY_PATH"),
     github_bot_name=os.getenv("GITHUB_BOT_NAME"),
-    ollama_model_security=os.getenv("OLLAMA_MODEL_SECURITY"),
-    ollama_model_style=os.getenv("OLLAMA_MODEL_STYLE"),
-    ollama_model_fast=os.getenv("OLLAMA_MODEL_FAST"),
+    type_agents=(os.getenv("TYPE_AGENTS") or "local").strip().lower(),
+    model_security=os.getenv("MODEL_SECURITY"),
+    model_style=os.getenv("MODEL_STYLE"),
+    anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+    google_api_key=os.getenv("GOOGLE_API_KEY"),
+    openai_api_key=os.getenv("OPENAI_API_KEY"),
     ollama_base_url=os.getenv("OLLAMA_BASE_URL"),
     ollama_request_timeout=_get_float("OLLAMA_REQUEST_TIMEOUT", 300.0),
-    summarizer_use_llm=_get_bool("SUMMARIZER_USE_LLM", False),
+    # mlx_lm.server exposes an OpenAI-compatible /v1 endpoint. Default port
+    # is 8080. Used only when TYPE_AGENTS=mlx.
+    mlx_base_url=os.getenv("MLX_BASE_URL", "http://localhost:8080/v1"),
     checkpoint_postgres_dsn=os.getenv("CHECKPOINT_POSTGRES_DSN"),
     checkpoint_sqlite_path=os.getenv(
         "CHECKPOINT_SQLITE_PATH", ".data/reviewer_checkpoints.sqlite"
@@ -110,10 +116,7 @@ settings = Settings(
     milvus_port=_get_int("MILVUS_PORT", 19530),
     milvus_rules_per_category=_get_int("MILVUS_RULES_PER_CATEGORY", 4),
     milvus_score_threshold=_get_float("MILVUS_SCORE_THRESHOLD", 1.5),
-    web_search_max_results=_get_int("WEB_SEARCH_MAX_RESULTS", 5),
-    read_url_max_chars=_get_int("READ_URL_MAX_CHARS", 5000),
     max_critic_iterations=_get_int("MAX_CRITIC_ITERATIONS", 3),
-    agent_recursion_limit=_get_int("AGENT_RECURSION_LIMIT", 2),
     enabled_agents=_get_csv("ENABLED_AGENTS", ["security", "style"]),
     log_level=os.getenv("LOG_LEVEL", "INFO"),
     use_reranker=_get_bool("USE_RERANKER", False),
@@ -130,13 +133,24 @@ settings = Settings(
     # truncation, which causes hallucinations and stalls on 7B models.
     ollama_num_ctx_security=_get_int("OLLAMA_NUM_CTX_SECURITY", 16384),
     ollama_num_ctx_style=_get_int("OLLAMA_NUM_CTX_STYLE", 8192),
-    ollama_num_ctx_fast=_get_int("OLLAMA_NUM_CTX_FAST", 4096),
-    # How long Ollama keeps the model loaded after a request. Stops cold-
-    # start penalty between PRs. Accepts "30m", "1h", "24h", "-1" (forever).
     ollama_keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
     # Hard cap on generated tokens. Without this, Ollama's default -1
     # lets the model loop into thousands of tokens of JSON garbage on
     # long-context format="json" runs — a well-known qwen2.5 failure mode.
     ollama_num_predict_analyst=_get_int("OLLAMA_NUM_PREDICT_ANALYST", 2048),
-    ollama_num_predict_fast=_get_int("OLLAMA_NUM_PREDICT_FAST", 1024),
+    # `raw` (default) — send unified diff to analysts as-is.
+    # `markdown` — pre-format per-file with explicit line numbers; ~30-50%
+    # less prefill for LLM, removes @@-hunk-math error class. Experimental.
+    diff_format=(os.getenv("DIFF_FORMAT") or "raw").strip().lower(),
+    # Char budget for the diff portion of one LLM call. Splits oversized
+    # diffs along file boundaries into multiple sequential calls so each
+    # fits inside num_ctx. With num_ctx=16384, ~40000 chars (~10k tokens)
+    # leaves room for the system prompt and ~4k output tokens.
+    max_diff_chars_per_call=_get_int("MAX_DIFF_CHARS_PER_CALL", 40000),
+    # Per-agent cap on chunk count.
+    #   -1   unlimited (full coverage, default)
+    #    0   disable chunking — always one LLM call (legacy behaviour)
+    #   >0   process at most N chunks; remaining ones logged + dumped
+    #        to <agent>-skipped-chunks.txt for visibility.
+    max_chunks_per_agent=_get_int("MAX_CHUNKS_PER_AGENT", -1),
 )

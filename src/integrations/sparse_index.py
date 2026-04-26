@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Iterable
 
 from rank_bm25 import BM25Okapi
 
@@ -103,20 +102,8 @@ class SparseRuleIndex:
             return None
         return self._by_id.get(rule_id)
 
-    def all_rule_ids(self) -> set[str]:
-        return set(self._by_id.keys())
-
     def get(self, index: int) -> dict:
         return self.rules[index]
 
-    def iter_category(self, category: str) -> Iterable[dict]:
-        for idx in self._by_category.get(category, []):
-            yield self.rules[idx]
-
 
 SPARSE_INDEX: SparseRuleIndex = SparseRuleIndex.from_rules_dir()
-
-
-def lookup_rule_by_id(rule_id: str) -> dict | None:
-    """Module-level convenience — O(1) lookup into the singleton."""
-    return SPARSE_INDEX.lookup_by_id(rule_id)

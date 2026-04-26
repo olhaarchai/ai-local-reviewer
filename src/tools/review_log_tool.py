@@ -16,7 +16,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from src.core.config import settings
-from src.core.review_log import _slug, _timestamp
+from src.core.review_log import _slug, _timestamp, model_slug
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def save_review_log(
     try:
         out_dir = Path(settings.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{_slug(repo_name)}-pr{pr_number}-{_timestamp()}.md"
+        filename = f"{_slug(repo_name)}-pr{pr_number}-{model_slug()}-{_timestamp()}.md"
         path = out_dir / filename
         path.write_text(content, encoding="utf-8")
         logger.info("[review_log] Wrote %s", path)
