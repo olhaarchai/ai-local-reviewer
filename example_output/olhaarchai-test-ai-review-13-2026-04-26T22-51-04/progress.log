@@ -1,0 +1,20 @@
+22:51:04.226  START  thread_id=olhaarchai/test-ai-review#13
+22:51:04.226  ENTER  filter            — strips lockfiles, binaries and noise from the diff
+22:51:04.227  EXIT   filter           (0.00s) kept_chars=22453 dropped_chars=2055
+22:51:04.229  ENTER  retriever         — pulls project rules from Milvus + BM25 by detected stack
+22:51:04.937  EXIT   retriever        (0.71s) kept=20 cats=5 dense=14 bm25=38
+22:51:04.939  ENTER  linter            — runs ruff on Python added lines as deterministic pre-findings
+22:51:04.939  EXIT   linter           (0.00s) py_files=0 findings=0
+22:51:04.940  ENTER  security_analyst  — LLM scan for OWASP-class vulnerabilities
+22:51:04.985  ENTER  style_analyst     — LLM scan for type safety, dead code, framework idioms
+22:54:32.922  EXIT   security_analyst (207.98s) agent=security comments=18 raw_chars=3651 chunks=1
+22:56:38.784  EXIT   style_analyst    (333.80s) agent=style comments=11 raw_chars=1700 chunks=1
+22:56:38.786  ENTER  critic            — applies G1-G4 guards + rule-ID membership to LLM comments
+22:56:38.788  EXIT   critic           (0.00s) in=29 kept=29 rejected=0
+22:56:38.790  ENTER  hitl_gate         — pauses for human approve / retry decision
+22:56:38.790  PAUSE  hitl_gate        (HITL interrupt — waiting for user)
+22:56:49.590  ENTER  hitl_gate         — pauses for human approve / retry decision
+22:56:49.590  EXIT   hitl_gate        (0.00s) action=approve
+22:56:49.591  ENTER  summarizer        — deterministic executive summary from surviving comments
+22:56:49.592  EXIT   summarizer       (0.00s) comments=29
+22:56:56.994  END    thread_id=olhaarchai/test-ai-review#13
